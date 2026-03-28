@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/tjjh89017/vrouter-daemon/internal/agent"
@@ -15,7 +16,12 @@ func main() {
 	cfg := config.ParseAgent()
 
 	if cfg.AgentID == "" {
-		log.Fatal("--agent-id is required")
+		id, err := os.ReadFile("/etc/machine-id")
+		if err != nil {
+			log.Fatalf("--agent-id not set and cannot read /etc/machine-id: %v", err)
+		}
+		cfg.AgentID = strings.TrimSpace(string(id))
+		log.Printf("agent-id not set, using machine-id: %s", cfg.AgentID)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
