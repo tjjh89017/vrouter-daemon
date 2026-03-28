@@ -330,17 +330,17 @@ func defaultConfigHandler(ctx context.Context, config string) (string, string, i
 	if err != nil {
 		return "", "", -1, fmt.Errorf("create temp script: %w", err)
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 
 	if _, err := f.WriteString(config); err != nil {
-		f.Close()
+		_ = f.Close()
 		return "", "", -1, fmt.Errorf("write temp script: %w", err)
 	}
 	if err := f.Chmod(0700); err != nil {
-		f.Close()
+		_ = f.Close()
 		return "", "", -1, fmt.Errorf("chmod temp script: %w", err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	cmd := exec.CommandContext(ctx, f.Name())
 	out, err := cmd.CombinedOutput()

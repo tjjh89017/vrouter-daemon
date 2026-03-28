@@ -26,9 +26,9 @@ import (
 //	  set firewall name MGMT rule 10 action accept
 type InitConfig struct {
 	Config        string `yaml:"config"`         // before: VyOS config block (loaded via "load")
-	Commands      string `yaml:"commands"`        // before: VyOS configure-mode commands
-	AfterConfig   string `yaml:"after_config"`    // after: VyOS config block (merged via "merge" after commit)
-	AfterCommands string `yaml:"after_commands"`  // after: VyOS configure-mode commands (after commit)
+	Commands      string `yaml:"commands"`       // before: VyOS configure-mode commands
+	AfterConfig   string `yaml:"after_config"`   // after: VyOS config block (merged via "merge" after commit)
+	AfterCommands string `yaml:"after_commands"` // after: VyOS configure-mode commands (after commit)
 }
 
 // AfterConfigFile is the temp file path for the after-phase config block merge.

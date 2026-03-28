@@ -18,8 +18,8 @@ type Entry struct {
 
 // Registry tracks connected agents by their agent ID.
 type Registry struct {
-	mu      sync.RWMutex
-	agents  map[string]*Entry
+	mu     sync.RWMutex
+	agents map[string]*Entry
 }
 
 // New creates a new Registry.

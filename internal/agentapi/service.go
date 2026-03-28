@@ -33,10 +33,10 @@ type configAckPayload struct {
 // Service implements the AgentService gRPC handler.
 type Service struct {
 	agentpb.UnimplementedAgentServiceServer
-	registry    *registry.Registry
-	dispatcher  *dispatch.Dispatcher
-	clusterReg  *cluster.Registry
-	broker      *cluster.Broker
+	registry   *registry.Registry
+	dispatcher *dispatch.Dispatcher
+	clusterReg *cluster.Registry
+	broker     *cluster.Broker
 }
 
 // New creates a new AgentService handler.
