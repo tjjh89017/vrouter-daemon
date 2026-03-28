@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vrouter-daemon
+  namespace: vrouter-system
+  labels:
+    app: vrouter-daemon
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vrouter-daemon
+  template:
+    metadata:
+      labels:
+        app: vrouter-daemon
+    spec:
+      containers:
+        - name: vrouter-daemon
+          image: vrouter-daemon:latest
+          args:
+            - --agent-listen=:50051
+            - --control-listen=:50052
+            - --redis-addr=redis.vrouter-system.svc:6379
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - name: agent
+              containerPort: 50051
+            - name: control
+              containerPort: 50052
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 10
+            periodSeconds: 30
+---
+# Operator-facing service (ClusterIP, internal only)
+apiVersion: v1
+kind: Service
+metadata:
+  name: vrouter-daemon
+  namespace: vrouter-system
+spec:
+  type: ClusterIP
+  selector:
+    app: vrouter-daemon
+  ports:
+    - name: control
+      port: 50052
+      targetPort: 50052
+---
+# Agent-facing service (LoadBalancer, external agents connect here)
+apiVersion: v1
+kind: Service
+metadata:
+  name: vrouter-daemon-agents
+  namespace: vrouter-system
+spec:
+  type: LoadBalancer
+  selector:
+    app: vrouter-daemon
+  ports:
+    - name: agent
+      port: 50051
+      targetPort: 50051
