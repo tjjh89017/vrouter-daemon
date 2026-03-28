@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 
 	agentpb "github.com/tjjh89017/vrouter-daemon/gen/go/agentpb"
 )
@@ -208,7 +209,14 @@ func (a *Agent) applyInitConfig(ctx context.Context) {
 }
 
 func (a *Agent) connect(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(a.serverAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                30 * time.Second,
+			Timeout:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
 	if err != nil {
 		return fmt.Errorf("dial server: %w", err)
 	}

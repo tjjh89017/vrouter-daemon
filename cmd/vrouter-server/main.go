@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	agentpb "github.com/tjjh89017/vrouter-daemon/gen/go/agentpb"
 	controlpb "github.com/tjjh89017/vrouter-daemon/gen/go/controlpb"
@@ -63,12 +64,21 @@ func main() {
 	agentSvc := agentapi.New(reg, disp, clusterReg, broker)
 	controlSvc := controlapi.New(clusterReg, broker)
 
+	kaParams := grpc.KeepaliveParams(keepalive.ServerParameters{
+		Time:    30 * time.Second,
+		Timeout: 10 * time.Second,
+	})
+	kaPolicy := grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+		MinTime:             10 * time.Second,
+		PermitWithoutStream: true,
+	})
+
 	// Agent-facing gRPC server
-	agentServer := grpc.NewServer()
+	agentServer := grpc.NewServer(kaParams, kaPolicy)
 	agentpb.RegisterAgentServiceServer(agentServer, agentSvc)
 
 	// Operator-facing gRPC server
-	controlServer := grpc.NewServer()
+	controlServer := grpc.NewServer(kaParams, kaPolicy)
 	controlpb.RegisterControlServiceServer(controlServer, controlSvc)
 
 	agentLis, err := net.Listen("tcp", cfg.AgentListenAddr)
