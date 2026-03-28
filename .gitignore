@@ -26,9 +26,9 @@ go.work.sum
 
 # Built binaries
 bin/
-vrouter-server
-vrouter-agent
-vrouter-daemon
+/vrouter-server
+/vrouter-agent
+/vrouter-daemon
 
 # env file
 .env
