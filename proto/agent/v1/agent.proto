@@ -1,0 +1,11 @@
+syntax = "proto3";
+package vrouter.agent.v1;
+
+option go_package = "github.com/tjjh89017/vrouter-daemon/gen/go/agentpb";
+
+service AgentService {
+  rpc Connect(stream AgentMessage) returns (stream ServerMessage) {}
+}
+
+message AgentMessage { string type = 1; bytes payload = 2; }
+message ServerMessage { string type = 1; string id = 2; bytes payload = 3; }
