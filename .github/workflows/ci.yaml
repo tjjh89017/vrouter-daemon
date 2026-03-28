@@ -18,16 +18,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Check formatting
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "Unformatted files:"
-            echo "$unformatted"
-            exit 1
-          fi
-      - name: Vet
-        run: go vet ./...
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
 
   test:
     runs-on: ubuntu-latest
