@@ -14,7 +14,6 @@ proto:
 build: proto
 	go build -o bin/vrouter-server ./cmd/vrouter-server/
 	go build -o bin/vrouter-agent ./cmd/vrouter-agent/
-	go build -o bin/vrouter-daemon ./cmd/vrouter-daemon/
 
 clean:
 	rm -rf bin/ $(GEN_DIR)/controlpb $(GEN_DIR)/agentpb
