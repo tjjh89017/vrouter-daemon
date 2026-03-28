@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"time"
 
@@ -249,12 +250,20 @@ func (a *Agent) handleApplyConfig(ctx context.Context, stream agentpb.AgentServi
 }
 
 // renderApplyScript generates a vbash script from pushed config/commands,
-// merged with init config (init config commands appended last = highest priority).
+// merged with init config if present.
+// When both init config block and pushed config block exist, the pushed config
+// is written to a temp file and merged via "merge" in the script.
 func (a *Agent) renderApplyScript(pushedConfig, pushedCommands string) ([]byte, error) {
 	if a.initConfig != nil && !a.initConfig.IsEmpty() {
+		// Write pushed config to file if merge will be needed
+		if a.initConfig.Config != "" && pushedConfig != "" {
+			if err := os.WriteFile(PushedConfigFile, []byte(pushedConfig), 0644); err != nil {
+				return nil, fmt.Errorf("write pushed config to %s: %w", PushedConfigFile, err)
+			}
+		}
 		return a.initConfig.RenderMergedScript(pushedConfig, pushedCommands)
 	}
-	return renderScript(pushedConfig, pushedCommands)
+	return RenderSimpleScript(pushedConfig, pushedCommands)
 }
 
 func (a *Agent) sendConfigAck(stream agentpb.AgentService_ConnectClient, reqID, stdout, stderr string, exitCode int, err error) {

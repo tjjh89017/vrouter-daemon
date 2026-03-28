@@ -70,13 +70,11 @@ func TestLoadInitConfigOnlyCommands(t *testing.T) {
 	}
 }
 
+// --- RenderScript (failover, init config only) ---
+
 func TestRenderScript(t *testing.T) {
 	ic := &InitConfig{
-		Config: `interfaces {
-  ethernet eth0 {
-    address dhcp
-  }
-}`,
+		Config:   "interfaces {\n  ethernet eth0 {\n    address dhcp\n  }\n}",
 		Commands: "set protocols static route 0.0.0.0/0 next-hop 192.168.1.1",
 	}
 
@@ -86,24 +84,14 @@ func TestRenderScript(t *testing.T) {
 	}
 
 	s := string(script)
-	if !strings.Contains(s, "#!/bin/vbash") {
-		t.Fatal("expected shebang")
-	}
-	if !strings.Contains(s, "load /dev/stdin") {
-		t.Fatal("expected load /dev/stdin")
-	}
-	if !strings.Contains(s, "ethernet eth0") {
-		t.Fatal("expected config content")
-	}
-	if !strings.Contains(s, "set protocols static route") {
-		t.Fatal("expected commands content")
-	}
-	if !strings.Contains(s, "commit") {
-		t.Fatal("expected commit")
-	}
-	if !strings.Contains(s, "save") {
-		t.Fatal("expected save")
-	}
+	assertContains(t, s, "#!/bin/vbash")
+	assertContains(t, s, "load /dev/stdin")
+	assertContains(t, s, "ethernet eth0")
+	assertContains(t, s, "set protocols static route")
+	assertContains(t, s, "commit")
+	assertContains(t, s, "save")
+	// No merge — failover only uses init config
+	assertNotContains(t, s, "merge")
 }
 
 func TestRenderScriptNoConfig(t *testing.T) {
@@ -112,152 +100,148 @@ func TestRenderScriptNoConfig(t *testing.T) {
 	}
 
 	script, err := ic.RenderScript()
-	if err != nil {
-		t.Fatalf("RenderScript error: %v", err)
-	}
-
-	s := string(script)
-	if !strings.Contains(s, "load /opt/vyatta/etc/config.boot.default") {
-		t.Fatal("expected default config load when no config provided")
-	}
+	s := mustRenderBytes(t, script, err)
+	assertContains(t, s, "load /opt/vyatta/etc/config.boot.default")
+	assertContains(t, s, "set interfaces ethernet eth0")
 }
 
 func TestRenderScriptEmpty(t *testing.T) {
 	ic := &InitConfig{}
-
 	script, err := ic.RenderScript()
-	if err != nil {
-		t.Fatalf("RenderScript error: %v", err)
+	s := mustRenderBytes(t, script, err)
+	assertContains(t, s, "load /opt/vyatta/etc/config.boot.default")
+}
+
+// --- RenderMergedScript (server push with init config) ---
+
+func TestRenderMergedScript_InitConfigAndPushedConfig(t *testing.T) {
+	ic := &InitConfig{
+		Config:   "init { base config }",
+		Commands: "set init-cmd",
 	}
 
-	s := string(script)
-	if !strings.Contains(s, "load /opt/vyatta/etc/config.boot.default") {
-		t.Fatal("expected default config load")
+	script, err := ic.RenderMergedScript("pushed { overlay config }", "set pushed-cmd")
+	s := mustRenderBytes(t, script, err)
+
+	// 1. load init config
+	assertContains(t, s, "load /dev/stdin")
+	assertContains(t, s, "init { base config }")
+	// 2. init commands
+	assertContains(t, s, "set init-cmd")
+	// 3. merge pushed config from file
+	assertContains(t, s, "merge /tmp/vrouter-pushed.config")
+	// 4. pushed commands
+	assertContains(t, s, "set pushed-cmd")
+
+	// Verify ordering: init commands BEFORE merge BEFORE pushed commands
+	initCmdIdx := strings.Index(s, "set init-cmd")
+	mergeIdx := strings.Index(s, "merge /tmp/vrouter-pushed.config")
+	pushedCmdIdx := strings.Index(s, "set pushed-cmd")
+
+	if initCmdIdx > mergeIdx {
+		t.Fatal("init commands must come before merge")
+	}
+	if mergeIdx > pushedCmdIdx {
+		t.Fatal("merge must come before pushed commands")
 	}
 }
 
-func TestMerge(t *testing.T) {
+func TestRenderMergedScript_InitCommandsOnly(t *testing.T) {
 	ic := &InitConfig{
-		Commands: "set firewall name MGMT rule 10 action accept",
+		Commands: "set init-cmd",
 	}
 
-	config, commands := ic.Merge("", "set interfaces ethernet eth0 address 10.0.0.1/24")
+	script, err := ic.RenderMergedScript("pushed { config }", "set pushed-cmd")
+	s := mustRenderBytes(t, script, err)
 
-	// No config from either side → empty (template loads default)
-	if config != "" {
-		t.Fatalf("expected empty config, got: %s", config)
-	}
+	// No init config block → pushed config loaded directly
+	assertContains(t, s, "load /dev/stdin")
+	assertContains(t, s, "pushed { config }")
+	// Init commands still run first
+	assertContains(t, s, "set init-cmd")
+	assertContains(t, s, "set pushed-cmd")
+	// No merge needed (no init config block)
+	assertNotContains(t, s, "merge")
 
-	// Init commands first, then pushed commands
-	if !strings.Contains(commands, "set interfaces ethernet eth0") {
-		t.Fatal("expected pushed commands in merged output")
-	}
-	if !strings.Contains(commands, "set firewall name MGMT") {
-		t.Fatal("expected init commands in merged output")
-	}
-	// Init commands must come BEFORE pushed commands
-	initIdx := strings.Index(commands, "set firewall")
-	pushIdx := strings.Index(commands, "set interfaces")
+	initIdx := strings.Index(s, "set init-cmd")
+	pushIdx := strings.Index(s, "set pushed-cmd")
 	if initIdx > pushIdx {
-		t.Fatal("expected init commands before pushed commands")
+		t.Fatal("init commands must come before pushed commands")
 	}
 }
 
-func TestMergeWithPushedConfig(t *testing.T) {
+func TestRenderMergedScript_NoPushedConfig(t *testing.T) {
 	ic := &InitConfig{
-		Config:   "init config block",
-		Commands: "set init cmd",
+		Config:   "init { config }",
+		Commands: "set init-cmd",
 	}
 
-	// Init config block takes priority
-	config, commands := ic.Merge("pushed config block", "set pushed cmd")
+	script, err := ic.RenderMergedScript("", "set pushed-cmd")
+	s := mustRenderBytes(t, script, err)
 
-	if config != "init config block" {
-		t.Fatalf("expected init config block, got: %s", config)
-	}
-	if !strings.Contains(commands, "set pushed cmd") {
-		t.Fatal("expected pushed commands")
-	}
-	if !strings.Contains(commands, "set init cmd") {
-		t.Fatal("expected init commands")
-	}
-	// Init commands before pushed
-	initIdx := strings.Index(commands, "set init cmd")
-	pushIdx := strings.Index(commands, "set pushed cmd")
-	if initIdx > pushIdx {
-		t.Fatal("expected init commands before pushed commands")
-	}
+	assertContains(t, s, "load /dev/stdin")
+	assertContains(t, s, "init { config }")
+	assertContains(t, s, "set init-cmd")
+	assertContains(t, s, "set pushed-cmd")
+	// No merge — no pushed config block
+	assertNotContains(t, s, "merge")
 }
 
-func TestMergeInitConfigBlockWins(t *testing.T) {
+func TestRenderMergedScript_NoPushedAnything(t *testing.T) {
 	ic := &InitConfig{
-		Config:   "init config block",
-		Commands: "set init cmd",
+		Config:   "init { config }",
+		Commands: "set init-cmd",
 	}
 
-	config, _ := ic.Merge("pushed config block", "set pushed cmd")
+	script, err := ic.RenderMergedScript("", "")
+	s := mustRenderBytes(t, script, err)
 
-	if config != "init config block" {
-		t.Fatalf("expected init config block to win, got: %s", config)
-	}
+	assertContains(t, s, "init { config }")
+	assertContains(t, s, "set init-cmd")
+	assertNotContains(t, s, "merge")
+	assertNotContains(t, s, "pushed")
 }
 
-func TestMergeFallsToPushedConfigWhenNoInitConfig(t *testing.T) {
-	ic := &InitConfig{
-		Commands: "set init cmd",
-	}
+// --- RenderSimpleScript (no init config) ---
 
-	config, _ := ic.Merge("pushed config block", "")
+func TestRenderSimpleScript(t *testing.T) {
+	script, err := RenderSimpleScript("my { config }", "set my-cmd")
+	s := mustRenderBytes(t, script, err)
 
-	if config != "pushed config block" {
-		t.Fatalf("expected pushed config block when init has no config, got: %s", config)
-	}
+	assertContains(t, s, "load /dev/stdin")
+	assertContains(t, s, "my { config }")
+	assertContains(t, s, "set my-cmd")
+	assertNotContains(t, s, "merge")
+	assertNotContains(t, s, "init config")
 }
 
-func TestRenderMergedScript(t *testing.T) {
-	ic := &InitConfig{
-		Commands: "set firewall name MGMT rule 10 action accept",
-	}
+func TestRenderSimpleScriptNoConfig(t *testing.T) {
+	script, err := RenderSimpleScript("", "set cmd")
+	s := mustRenderBytes(t, script, err)
+	assertContains(t, s, "load /opt/vyatta/etc/config.boot.default")
+	assertContains(t, s, "set cmd")
+}
 
-	script, err := ic.RenderMergedScript(
-		`interfaces { ethernet eth0 { address dhcp } }`,
-		"set protocols static route 0.0.0.0/0 next-hop 192.168.1.1",
-	)
+// --- helpers ---
+
+func mustRenderBytes(t *testing.T, script []byte, err error) string {
+	t.Helper()
 	if err != nil {
-		t.Fatalf("RenderMergedScript error: %v", err)
+		t.Fatalf("render error: %v", err)
 	}
+	return string(script)
+}
 
-	s := string(script)
-	if !strings.Contains(s, "load /dev/stdin") {
-		t.Fatal("expected load /dev/stdin for pushed config")
-	}
-	if !strings.Contains(s, "ethernet eth0") {
-		t.Fatal("expected pushed config in script")
-	}
-	if !strings.Contains(s, "set protocols static route") {
-		t.Fatal("expected pushed commands in script")
-	}
-	if !strings.Contains(s, "set firewall name MGMT") {
-		t.Fatal("expected init commands in script")
-	}
-	if !strings.Contains(s, "init config commands (protected)") {
-		t.Fatal("expected init config marker comment")
+func assertContains(t *testing.T, s, substr string) {
+	t.Helper()
+	if !strings.Contains(s, substr) {
+		t.Fatalf("expected script to contain %q, got:\n%s", substr, s)
 	}
 }
 
-func TestRenderMergedScriptNoPushedConfig(t *testing.T) {
-	ic := &InitConfig{
-		Commands: "set firewall name MGMT rule 10 action accept",
-	}
-
-	script, err := ic.RenderMergedScript("", "set pushed cmd")
-	if err != nil {
-		t.Fatalf("error: %v", err)
-	}
-
-	s := string(script)
-	// No pushed config and no init config block → load default
-	if !strings.Contains(s, "load /opt/vyatta/etc/config.boot.default") {
-		t.Fatal("expected default config load")
+func assertNotContains(t *testing.T, s, substr string) {
+	t.Helper()
+	if strings.Contains(s, substr) {
+		t.Fatalf("expected script NOT to contain %q, got:\n%s", substr, s)
 	}
 }
