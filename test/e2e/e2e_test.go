@@ -58,8 +58,8 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatalf("listen control: %v", err)
 	}
 
-	go agentServer.Serve(agentLis)
-	go controlServer.Serve(controlLis)
+	go func() { _ = agentServer.Serve(agentLis) }()
+	go func() { _ = controlServer.Serve(controlLis) }()
 
 	env := &testEnv{
 		reg:           reg,
@@ -94,7 +94,7 @@ func (e *testEnv) startAgent(t *testing.T, agentID string, handler agent.ConfigH
 	}
 
 	a := agent.New(e.agentAddr, agentID, opts...)
-	go a.Run(ctx)
+	go func() { _ = a.Run(ctx) }()
 }
 
 func (e *testEnv) controlClient(t *testing.T) controlpb.ControlServiceClient {
@@ -103,7 +103,7 @@ func (e *testEnv) controlClient(t *testing.T) controlpb.ControlServiceClient {
 	if err != nil {
 		t.Fatalf("dial control: %v", err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { _ = conn.Close() })
 	return controlpb.NewControlServiceClient(conn)
 }
 
@@ -311,7 +311,7 @@ func TestE2E_AgentDisconnectReconnect(t *testing.T) {
 			return "ok", "", 0, nil
 		}),
 	)
-	go a.Run(ctx)
+	go func() { _ = a.Run(ctx) }()
 
 	waitForAgent(t, client, "agent-reconnect", 3*time.Second)
 
@@ -335,7 +335,7 @@ func TestE2E_AgentDisconnectReconnect(t *testing.T) {
 			return "reconnected", "", 0, nil
 		}),
 	)
-	go a2.Run(ctx2)
+	go func() { _ = a2.Run(ctx2) }()
 
 	waitForAgent(t, client, "agent-reconnect", 3*time.Second)
 
@@ -385,18 +385,18 @@ func TestE2E_GracefulShutdown(t *testing.T) {
 	agentLis, _ := net.Listen("tcp", "127.0.0.1:0")
 	controlLis, _ := net.Listen("tcp", "127.0.0.1:0")
 
-	go agentServer.Serve(agentLis)
-	go controlServer.Serve(controlLis)
+	go func() { _ = agentServer.Serve(agentLis) }()
+	go func() { _ = controlServer.Serve(controlLis) }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a := agent.New(agentLis.Addr().String(), "shutdown-test",
 		agent.WithReconnect(50*time.Millisecond, 200*time.Millisecond),
 	)
-	go a.Run(ctx)
+	go func() { _ = a.Run(ctx) }()
 
 	// Wait for connection
 	conn, _ := grpc.NewClient(controlLis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	client := controlpb.NewControlServiceClient(conn)
 	waitForAgent(t, client, "shutdown-test", 3*time.Second)
 
