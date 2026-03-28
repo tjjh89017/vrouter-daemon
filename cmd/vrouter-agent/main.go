@@ -29,7 +29,22 @@ func main() {
 		cancel()
 	}()
 
-	a := agent.New(cfg.ServerAddr, cfg.AgentID)
+	var opts []agent.Option
+
+	// Load init config if specified
+	if cfg.InitConfigPath != "" {
+		ic, err := agent.LoadInitConfig(cfg.InitConfigPath)
+		if err != nil {
+			log.Fatalf("failed to load init config from %s: %v", cfg.InitConfigPath, err)
+		}
+		if !ic.IsEmpty() {
+			log.Printf("loaded init config from %s (config=%d bytes, commands=%d bytes)",
+				cfg.InitConfigPath, len(ic.Config), len(ic.Commands))
+			opts = append(opts, agent.WithInitConfig(ic, cfg.InitMaxRetries))
+		}
+	}
+
+	a := agent.New(cfg.ServerAddr, cfg.AgentID, opts...)
 	log.Printf("connecting to server %s as %q", cfg.ServerAddr, cfg.AgentID)
 
 	if err := a.Run(ctx); err != nil && err != context.Canceled {

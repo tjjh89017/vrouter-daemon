@@ -50,6 +50,11 @@ type Agent struct {
 
 	reconnectMin time.Duration
 	reconnectMax time.Duration
+
+	// Init config failover
+	initConfig       *InitConfig
+	initMaxRetries   int  // consecutive failures before applying init config
+	initApplied      bool // true if init config was already applied this disconnect cycle
 }
 
 // Option configures an Agent.
@@ -73,15 +78,26 @@ func WithReconnect(min, max time.Duration) Option {
 	}
 }
 
+// WithInitConfig sets the init config for failover.
+// maxRetries is the number of consecutive connection failures before
+// the init config is applied (0 = apply on first failure).
+func WithInitConfig(ic *InitConfig, maxRetries int) Option {
+	return func(a *Agent) {
+		a.initConfig = ic
+		a.initMaxRetries = maxRetries
+	}
+}
+
 // New creates a new Agent.
 func New(serverAddr, agentID string, opts ...Option) *Agent {
 	a := &Agent{
-		serverAddr:    serverAddr,
-		agentID:       agentID,
-		version:       "dev",
-		configHandler: defaultConfigHandler,
-		reconnectMin:  1 * time.Second,
-		reconnectMax:  30 * time.Second,
+		serverAddr:     serverAddr,
+		agentID:        agentID,
+		version:        "dev",
+		configHandler:  defaultConfigHandler,
+		reconnectMin:   1 * time.Second,
+		reconnectMax:   30 * time.Second,
+		initMaxRetries: 3,
 	}
 	for _, o := range opts {
 		o(a)
@@ -91,14 +107,27 @@ func New(serverAddr, agentID string, opts ...Option) *Agent {
 
 // Run connects to the server and processes messages. It reconnects on
 // disconnect until the context is cancelled.
+//
+// If an InitConfig is set and the agent fails to connect after
+// initMaxRetries consecutive attempts, it applies the init config
+// to restore management connectivity (once per disconnect cycle).
 func (a *Agent) Run(ctx context.Context) error {
 	backoff := a.reconnectMin
+	failures := 0
+
 	for {
 		err := a.connect(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		log.Printf("disconnected from server: %v, reconnecting in %v", err, backoff)
+
+		failures++
+		log.Printf("disconnected from server: %v, reconnecting in %v (failures=%d)", err, backoff, failures)
+
+		// Apply init config after too many consecutive failures
+		if a.shouldApplyInitConfig(failures) {
+			a.applyInitConfig(ctx)
+		}
 
 		select {
 		case <-ctx.Done():
@@ -111,6 +140,41 @@ func (a *Agent) Run(ctx context.Context) error {
 			backoff = a.reconnectMax
 		}
 	}
+}
+
+// shouldApplyInitConfig returns true if init config should be applied now.
+func (a *Agent) shouldApplyInitConfig(failures int) bool {
+	if a.initConfig == nil || a.initConfig.IsEmpty() {
+		return false
+	}
+	if a.initApplied {
+		return false // already applied this disconnect cycle
+	}
+	return failures > a.initMaxRetries
+}
+
+// applyInitConfig renders and executes the init config script.
+func (a *Agent) applyInitConfig(ctx context.Context) {
+	log.Printf("applying init config after connection failures")
+
+	script, err := a.initConfig.RenderScript()
+	if err != nil {
+		log.Printf("failed to render init config script: %v", err)
+		return
+	}
+
+	stdout, stderr, exitCode, err := a.configHandler(ctx, string(script))
+	if err != nil {
+		log.Printf("init config apply error: %v", err)
+		return
+	}
+	if exitCode != 0 {
+		log.Printf("init config apply failed (exit %d): stdout=%s stderr=%s", exitCode, stdout, stderr)
+		return
+	}
+
+	log.Printf("init config applied successfully")
+	a.initApplied = true
 }
 
 func (a *Agent) connect(ctx context.Context) error {
@@ -140,9 +204,8 @@ func (a *Agent) connect(ctx context.Context) error {
 
 	log.Printf("registered as %q", a.agentID)
 
-	// Reset backoff on successful connect
-	// (handled in Run by resetting after connect returns nil... but connect
-	// returns error on disconnect, so we just let Run handle it)
+	// Connection succeeded — reset init config state
+	a.initApplied = false
 
 	// Message pump
 	for {

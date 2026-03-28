@@ -15,8 +15,10 @@ type ServerConfig struct {
 
 // AgentConfig holds the agent-side configuration.
 type AgentConfig struct {
-	ServerAddr string // address of the AgentService to connect to
-	AgentID    string // unique identifier for this agent
+	ServerAddr     string // address of the AgentService to connect to
+	AgentID        string // unique identifier for this agent
+	InitConfigPath string // path to init config YAML file (config + commands)
+	InitMaxRetries int    // consecutive failures before applying init config
 }
 
 // DaemonConfig holds configuration for mixed mode (server + agent).
@@ -41,6 +43,8 @@ func ParseAgent() *AgentConfig {
 	cfg := &AgentConfig{}
 	flag.StringVar(&cfg.ServerAddr, "server", envOrDefault("SERVER_ADDR", "localhost:50051"), "AgentService server address")
 	flag.StringVar(&cfg.AgentID, "agent-id", envOrDefault("AGENT_ID", ""), "Agent ID (required)")
+	flag.StringVar(&cfg.InitConfigPath, "init-config", envOrDefault("INIT_CONFIG", ""), "Path to init config YAML file (config + commands)")
+	flag.IntVar(&cfg.InitMaxRetries, "init-max-retries", 3, "Consecutive connection failures before applying init config")
 	flag.Parse()
 	return cfg
 }
@@ -54,6 +58,8 @@ func ParseDaemon() *DaemonConfig {
 	flag.StringVar(&cfg.Server.PodIP, "pod-ip", envOrDefault("POD_IP", ""), "Pod IP for cluster registry (required)")
 	flag.StringVar(&cfg.Agent.ServerAddr, "server", envOrDefault("SERVER_ADDR", ""), "AgentService server address (default: connect to local agent-listen)")
 	flag.StringVar(&cfg.Agent.AgentID, "agent-id", envOrDefault("AGENT_ID", ""), "Agent ID (required)")
+	flag.StringVar(&cfg.Agent.InitConfigPath, "init-config", envOrDefault("INIT_CONFIG", ""), "Path to init config YAML file (config + commands)")
+	flag.IntVar(&cfg.Agent.InitMaxRetries, "init-max-retries", 3, "Consecutive connection failures before applying init config")
 	flag.Parse()
 
 	// In daemon mode, default to connecting to the local agent listener
