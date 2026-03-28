@@ -1,0 +1,26 @@
+name: vrouter-agent
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+
+maintainer: "tjjh89017 <tjjh89017@hotmail.com>"
+description: "VRouter agent for VyOS bare metal routers"
+vendor: tjjh89017
+license: Apache-2.0
+
+contents:
+  - src: dist/vrouter-agent-linux-${ARCH}
+    dst: /usr/local/bin/vrouter-agent
+    file_info:
+      mode: 0755
+
+  - src: packaging/vrouter-agent.service
+    dst: /lib/systemd/system/vrouter-agent.service
+
+  - src: packaging/vrouter-agent.env
+    dst: /etc/default/vrouter-agent
+    type: config|noreplace
+
+scripts:
+  postinstall: packaging/postinstall.sh
+  preremove: packaging/preremove.sh

@@ -1,0 +1,19 @@
+[Unit]
+Description=VRouter Agent
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/default/vrouter-agent
+ExecStart=/bin/bash -c '\
+    if [ -n "$VRF_NAME" ]; then \
+        exec ip vrf exec "$VRF_NAME" /usr/local/bin/vrouter-agent $AGENT_ARGS; \
+    else \
+        exec /usr/local/bin/vrouter-agent $AGENT_ARGS; \
+    fi'
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

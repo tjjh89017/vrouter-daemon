@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Build agent and publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build agent binaries
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o dist/vrouter-agent-linux-amd64 ./cmd/vrouter-agent/
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o dist/vrouter-agent-linux-arm64 ./cmd/vrouter-agent/
+
+      - name: Build deb (amd64)
+        uses: goreleaser/nfpm-action@v1
+        with:
+          packager: deb
+          config: nfpm.yaml
+          target: dist/
+        env:
+          VERSION: ${{ github.ref_name }}
+          ARCH: amd64
+
+      - name: Build deb (arm64)
+        uses: goreleaser/nfpm-action@v1
+        with:
+          packager: deb
+          config: nfpm.yaml
+          target: dist/
+        env:
+          VERSION: ${{ github.ref_name }}
+          ARCH: arm64
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/vrouter-agent-linux-amd64
+            dist/vrouter-agent-linux-arm64
+            dist/*.deb
