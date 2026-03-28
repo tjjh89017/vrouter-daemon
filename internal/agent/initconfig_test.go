@@ -29,7 +29,9 @@ after_commands: |
   set protocols static route 0.0.0.0/0 next-hop 192.168.1.1
   set firewall name MGMT rule 10 action accept
 `
-	os.WriteFile(path, []byte(content), 0644)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	ic, err := LoadInitConfig(path)
 	if err != nil {
@@ -63,7 +65,9 @@ func TestLoadInitConfigEmpty(t *testing.T) {
 func TestLoadInitConfigBeforeOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "init.yaml")
-	os.WriteFile(path, []byte("commands: |\n  set foo\n"), 0644)
+	if err := os.WriteFile(path, []byte("commands: |\n  set foo\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	ic, err := LoadInitConfig(path)
 	if err != nil {

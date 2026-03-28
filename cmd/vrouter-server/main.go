@@ -49,7 +49,11 @@ func main() {
 		}
 		log.Printf("connected to Redis at %s", cfg.RedisAddr)
 	}
-	defer clusterReg.Close()
+	defer func() {
+		if err := clusterReg.Close(); err != nil {
+			log.Printf("close cluster registry: %v", err)
+		}
+	}()
 
 	broker := cluster.NewBroker(redisClient)
 

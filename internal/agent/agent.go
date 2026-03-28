@@ -137,7 +137,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	failures := 0
 
 	for {
-		a.connect(ctx)
+		if err := a.connect(ctx); err != nil {
+			log.Printf("connect: %v", err)
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -210,7 +212,7 @@ func (a *Agent) connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dial server: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := agentpb.NewAgentServiceClient(conn)
 	stream, err := client.Connect(ctx)
