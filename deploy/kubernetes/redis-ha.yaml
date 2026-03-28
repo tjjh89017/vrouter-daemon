@@ -7,6 +7,7 @@ metadata:
   namespace: vrouter-system
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   selector:
     app: redis
   ports:
@@ -131,6 +132,8 @@ spec:
             - -c
             - |
               cat > /tmp/sentinel.conf <<EOF
+              sentinel resolve-hostnames yes
+              sentinel announce-hostnames yes
               sentinel monitor vrouter-redis redis-0.redis-headless.vrouter-system.svc 6379 2
               sentinel down-after-milliseconds vrouter-redis 5000
               sentinel failover-timeout vrouter-redis 10000

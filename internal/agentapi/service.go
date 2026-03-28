@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 
 	agentpb "github.com/tjjh89017/vrouter-daemon/gen/go/agentpb"
 	"github.com/tjjh89017/vrouter-daemon/internal/cluster"
@@ -94,6 +95,22 @@ func (s *Service) Connect(stream agentpb.AgentService_ConnectServer) error {
 	// When a request arrives via Redis, dispatch it locally through the stream.
 	watchCtx, watchCancel := context.WithCancel(stream.Context())
 	defer watchCancel()
+
+	// Refresh the Redis TTL periodically while the agent is connected.
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-ticker.C:
+				if err := s.clusterReg.Refresh(watchCtx, reg.AgentID); err != nil {
+					log.Printf("cluster refresh %q: %v", reg.AgentID, err)
+				}
+			}
+		}
+	}()
 
 	go func() {
 		if err := s.broker.Watch(watchCtx, reg.AgentID, func(ctx context.Context, req *cluster.Request) *cluster.Result {

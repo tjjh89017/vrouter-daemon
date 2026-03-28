@@ -26,7 +26,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: vrouter-server
-          image: ghcr.io/tjjh89017/vrouter-server:latest
+          image: ghcr.io/tjjh89017/vrouter-server:main
           args:
             - --agent-listen=:50051
             - --control-listen=:50052
@@ -50,12 +50,12 @@ spec:
               cpu: 500m
               memory: 256Mi
           readinessProbe:
-            grpc:
+            tcpSocket:
               port: 50052
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            grpc:
+            tcpSocket:
               port: 50052
             initialDelaySeconds: 10
             periodSeconds: 30
@@ -75,17 +75,18 @@ spec:
       port: 50052
       targetPort: 50052
 ---
-# Agent-facing service (LoadBalancer, external agents connect here)
+# Agent-facing service (NodePort, external agents connect here)
 apiVersion: v1
 kind: Service
 metadata:
   name: vrouter-daemon-agents
   namespace: vrouter-system
 spec:
-  type: LoadBalancer
+  type: NodePort
   selector:
     app: vrouter-daemon
   ports:
     - name: agent
       port: 50051
       targetPort: 50051
+      nodePort: 30051
