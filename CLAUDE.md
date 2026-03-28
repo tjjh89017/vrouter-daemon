@@ -24,9 +24,8 @@ go build ./...     # quick compile check
 # Build individual binaries
 go build -o bin/vrouter-server ./cmd/vrouter-server/
 go build -o bin/vrouter-agent  ./cmd/vrouter-agent/
-go build -o bin/vrouter-daemon ./cmd/vrouter-daemon/
 
-# Tests
+# Tests (E2E tests require Redis on localhost:6379)
 go test ./...                          # all tests
 go test ./internal/registry/...        # specific package
 go test -run TestApplyConfig ./...     # specific test
@@ -54,16 +53,21 @@ Go module: `github.com/tjjh89017/vrouter-daemon`
 | `gen/go/agentpb/` | Generated Go stubs for AgentService |
 | `internal/controlapi/` | ControlService gRPC handler |
 | `internal/agentapi/` | AgentService gRPC handler (bidirectional streams) |
-| `internal/registry/` | Agent connection registry (agentID → stream, thread-safe) |
+| `internal/registry/` | Local agent connection registry (agentID → stream, thread-safe) |
 | `internal/dispatch/` | Request-response correlation (apply_config → config_ack) |
-| `internal/config/` | Server configuration (flags, env vars) |
-| `cmd/vrouter-server/` | Server only binary |
-| `cmd/vrouter-agent/` | Agent only binary |
-| `cmd/vrouter-daemon/` | Mixed mode binary (server + agent) |
+| `internal/cluster/` | Redis-backed cluster registry + broker for scale-out |
+| `internal/agent/` | Agent client library (connect, register, init config, backoff) |
+| `internal/config/` | Configuration (flags, env vars) |
+| `cmd/vrouter-server/` | Server binary (runs in k8s) |
+| `cmd/vrouter-agent/` | Agent binary (runs on bare metal VyOS) |
+| `deploy/kubernetes/` | K8s manifests (namespace, Redis, deployment, services) |
 
 ### Key Design Principles
 
 - Everything under `internal/` — no external Go consumers
 - The operator imports nothing from this repo; `control.proto` is the only shared contract
 - Two gRPC services on separate ports (different network policies)
-- `controlapi` and `agentapi` communicate only through `registry` and `dispatch`
+- Scale-out via Redis: agent registry + request broker (RPUSH/BLPOP), no pod-to-pod forwarding
+- `controlapi` reads state from Redis, submits requests via broker
+- `agentapi` registers agents in Redis, watches broker queue per agent
+- Agent init config ensures management connectivity on server unreachable
