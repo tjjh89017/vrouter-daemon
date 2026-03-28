@@ -63,7 +63,9 @@ func TestGetStatus(t *testing.T) {
 	}
 
 	_, _ = svc.clusterReg.Register(ctx, "agent-1", "1.0.0")
-	svc.clusterReg.UpdateStatus(ctx, "agent-1", "1.0.0", []byte(`{"up":true}`))
+	if err := svc.clusterReg.UpdateStatus(ctx, "agent-1", "1.0.0", []byte(`{"up":true}`)); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
 
 	resp, err := svc.GetStatus(ctx, &controlpb.GetStatusRequest{AgentId: "agent-1"})
 	if err != nil {

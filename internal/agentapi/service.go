@@ -95,22 +95,26 @@ func (s *Service) Connect(stream agentpb.AgentService_ConnectServer) error {
 	watchCtx, watchCancel := context.WithCancel(stream.Context())
 	defer watchCancel()
 
-	go s.broker.Watch(watchCtx, reg.AgentID, func(ctx context.Context, req *cluster.Request) *cluster.Result {
-		result, err := s.dispatcher.ApplyConfig(ctx, req.AgentID, req.ConfigPayload)
-		if err != nil {
-			return &cluster.Result{
-				Success:      false,
-				ErrorMessage: err.Error(),
+	go func() {
+		if err := s.broker.Watch(watchCtx, reg.AgentID, func(ctx context.Context, req *cluster.Request) *cluster.Result {
+			result, err := s.dispatcher.ApplyConfig(ctx, req.AgentID, req.ConfigPayload)
+			if err != nil {
+				return &cluster.Result{
+					Success:      false,
+					ErrorMessage: err.Error(),
+				}
 			}
+			return &cluster.Result{
+				Success:      result.Success,
+				ExitCode:     result.ExitCode,
+				Stdout:       result.Stdout,
+				Stderr:       result.Stderr,
+				ErrorMessage: result.ErrorMessage,
+			}
+		}); err != nil {
+			log.Printf("broker watch %q: %v", reg.AgentID, err)
 		}
-		return &cluster.Result{
-			Success:      result.Success,
-			ExitCode:     result.ExitCode,
-			Stdout:       result.Stdout,
-			Stderr:       result.Stderr,
-			ErrorMessage: result.ErrorMessage,
-		}
-	})
+	}()
 
 	// Message pump
 	for {

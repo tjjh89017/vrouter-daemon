@@ -24,7 +24,7 @@ func TestRedisClient(t *testing.T) *redis.Client {
 		t.Skipf("Redis not available at %s: %v", addr, err)
 	}
 
-	t.Cleanup(func() { client.Close() })
+	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
 

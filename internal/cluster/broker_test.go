@@ -13,12 +13,14 @@ func TestBrokerSubmitAndWatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go broker.Watch(ctx, "test-agent", func(ctx context.Context, req *Request) *Result {
-		return &Result{
-			Success: true,
-			Stdout:  "handled: " + string(req.ConfigPayload),
-		}
-	})
+	go func() {
+		_ = broker.Watch(ctx, "test-agent", func(ctx context.Context, req *Request) *Result {
+			return &Result{
+				Success: true,
+				Stdout:  "handled: " + string(req.ConfigPayload),
+			}
+		})
+	}()
 
 	time.Sleep(100 * time.Millisecond)
 
