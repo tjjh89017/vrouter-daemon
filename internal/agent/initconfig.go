@@ -96,28 +96,29 @@ func (ic *InitConfig) RenderScript() ([]byte, error) {
 }
 
 // Merge combines pushed config/commands with init config.
-// Init config commands are appended AFTER pushed commands (run last = highest priority).
-// For the config block: pushed config is used if present, otherwise init config's,
-// otherwise loads VyOS default.
+// Init config commands run FIRST (base layer), then pushed commands on top.
+// This ensures init config establishes the baseline, and pushed config can
+// override non-protected settings.
+// For the config block: init config > pushed config > VyOS default.
 func (ic *InitConfig) Merge(pushedConfig, pushedCommands string) (mergedConfig, mergedCommands string) {
-	// Config block: use pushed if available, else init config's
+	// Config block: init config wins, then pushed, then default
 	switch {
-	case pushedConfig != "":
-		mergedConfig = pushedConfig
 	case ic.Config != "":
 		mergedConfig = ic.Config
+	case pushedConfig != "":
+		mergedConfig = pushedConfig
 	default:
 		mergedConfig = "" // template will load default
 	}
 
-	// Commands: pushed first, then init config commands (init wins on conflict)
+	// Commands: init config first (base), then pushed commands (overlay)
 	var parts []string
-	if pushedCommands != "" {
-		parts = append(parts, strings.TrimRight(pushedCommands, "\n"))
-	}
 	if ic.Commands != "" {
 		parts = append(parts, "# --- init config commands (protected) ---")
 		parts = append(parts, strings.TrimRight(ic.Commands, "\n"))
+	}
+	if pushedCommands != "" {
+		parts = append(parts, strings.TrimRight(pushedCommands, "\n"))
 	}
 	mergedCommands = strings.Join(parts, "\n")
 

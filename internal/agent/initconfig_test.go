@@ -148,18 +148,18 @@ func TestMerge(t *testing.T) {
 		t.Fatalf("expected empty config, got: %s", config)
 	}
 
-	// Pushed commands first, then init commands
+	// Init commands first, then pushed commands
 	if !strings.Contains(commands, "set interfaces ethernet eth0") {
 		t.Fatal("expected pushed commands in merged output")
 	}
 	if !strings.Contains(commands, "set firewall name MGMT") {
 		t.Fatal("expected init commands in merged output")
 	}
-	// Init commands must come AFTER pushed commands
-	pushIdx := strings.Index(commands, "set interfaces")
+	// Init commands must come BEFORE pushed commands
 	initIdx := strings.Index(commands, "set firewall")
-	if initIdx < pushIdx {
-		t.Fatal("expected init commands after pushed commands")
+	pushIdx := strings.Index(commands, "set interfaces")
+	if initIdx > pushIdx {
+		t.Fatal("expected init commands before pushed commands")
 	}
 }
 
@@ -169,11 +169,11 @@ func TestMergeWithPushedConfig(t *testing.T) {
 		Commands: "set init cmd",
 	}
 
-	// Pushed config takes priority for the config block
+	// Init config block takes priority
 	config, commands := ic.Merge("pushed config block", "set pushed cmd")
 
-	if config != "pushed config block" {
-		t.Fatalf("expected pushed config block, got: %s", config)
+	if config != "init config block" {
+		t.Fatalf("expected init config block, got: %s", config)
 	}
 	if !strings.Contains(commands, "set pushed cmd") {
 		t.Fatal("expected pushed commands")
@@ -181,18 +181,36 @@ func TestMergeWithPushedConfig(t *testing.T) {
 	if !strings.Contains(commands, "set init cmd") {
 		t.Fatal("expected init commands")
 	}
+	// Init commands before pushed
+	initIdx := strings.Index(commands, "set init cmd")
+	pushIdx := strings.Index(commands, "set pushed cmd")
+	if initIdx > pushIdx {
+		t.Fatal("expected init commands before pushed commands")
+	}
 }
 
-func TestMergeInitConfigBlockUsedWhenNoPushedConfig(t *testing.T) {
+func TestMergeInitConfigBlockWins(t *testing.T) {
 	ic := &InitConfig{
 		Config:   "init config block",
 		Commands: "set init cmd",
 	}
 
-	config, _ := ic.Merge("", "set pushed cmd")
+	config, _ := ic.Merge("pushed config block", "set pushed cmd")
 
 	if config != "init config block" {
-		t.Fatalf("expected init config block when no pushed config, got: %s", config)
+		t.Fatalf("expected init config block to win, got: %s", config)
+	}
+}
+
+func TestMergeFallsToPushedConfigWhenNoInitConfig(t *testing.T) {
+	ic := &InitConfig{
+		Commands: "set init cmd",
+	}
+
+	config, _ := ic.Merge("pushed config block", "")
+
+	if config != "pushed config block" {
+		t.Fatalf("expected pushed config block when init has no config, got: %s", config)
 	}
 }
 
