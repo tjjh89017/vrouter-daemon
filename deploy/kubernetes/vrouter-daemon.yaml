@@ -27,6 +27,7 @@ spec:
       containers:
         - name: vrouter-server
           image: ghcr.io/tjjh89017/vrouter-server:main
+          imagePullPolicy: Always
           args:
             - --agent-listen=:50051
             - --control-listen=:50052

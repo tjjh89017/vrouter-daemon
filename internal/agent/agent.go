@@ -323,9 +323,26 @@ func (a *Agent) sendConfigAck(stream agentpb.AgentService_ConnectClient, reqID, 
 	}
 }
 
-// defaultConfigHandler executes config as a shell script.
+// defaultConfigHandler writes the script to a temp file and executes it
+// directly so the #!/bin/vbash shebang is respected by the kernel.
 func defaultConfigHandler(ctx context.Context, config string) (string, string, int, error) {
-	cmd := exec.CommandContext(ctx, "sh", "-c", config)
+	f, err := os.CreateTemp("", "vrouter-config-*.sh")
+	if err != nil {
+		return "", "", -1, fmt.Errorf("create temp script: %w", err)
+	}
+	defer os.Remove(f.Name())
+
+	if _, err := f.WriteString(config); err != nil {
+		f.Close()
+		return "", "", -1, fmt.Errorf("write temp script: %w", err)
+	}
+	if err := f.Chmod(0700); err != nil {
+		f.Close()
+		return "", "", -1, fmt.Errorf("chmod temp script: %w", err)
+	}
+	f.Close()
+
+	cmd := exec.CommandContext(ctx, f.Name())
 	out, err := cmd.CombinedOutput()
 	exitCode := 0
 	if err != nil {
