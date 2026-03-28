@@ -108,23 +108,31 @@ func New(serverAddr, agentID string, opts ...Option) *Agent {
 }
 
 // Run connects to the server and processes messages. It reconnects on
-// disconnect until the context is cancelled.
+// disconnect with exponential backoff + jitter until the context is cancelled.
 //
 // If an InitConfig is set and the agent fails to connect after
 // initMaxRetries consecutive attempts, it applies the init config
 // to restore management connectivity (once per disconnect cycle).
+// On successful reconnect, failure count and backoff reset.
 func (a *Agent) Run(ctx context.Context) error {
-	backoff := a.reconnectMin
+	bo := newBackoff(a.reconnectMin, a.reconnectMax)
 	failures := 0
 
 	for {
-		err := a.connect(ctx)
+		wasConnected, err := a.connect(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
+		// If we were connected (registered successfully), reset backoff
+		if wasConnected {
+			bo.Reset()
+			failures = 0
+		}
+
 		failures++
-		log.Printf("disconnected from server: %v, reconnecting in %v (failures=%d)", err, backoff, failures)
+		wait := bo.Next()
+		log.Printf("disconnected from server: %v, reconnecting in %v (failures=%d)", err, wait, failures)
 
 		// Apply init config after too many consecutive failures
 		if a.shouldApplyInitConfig(failures) {
@@ -134,12 +142,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(backoff):
-		}
-
-		backoff *= 2
-		if backoff > a.reconnectMax {
-			backoff = a.reconnectMax
+		case <-time.After(wait):
 		}
 	}
 }
@@ -179,17 +182,20 @@ func (a *Agent) applyInitConfig(ctx context.Context) {
 	a.initApplied = true
 }
 
-func (a *Agent) connect(ctx context.Context) error {
+// connect dials the server, registers, and processes messages.
+// Returns (true, err) if registration succeeded (was connected),
+// (false, err) if it failed before registration.
+func (a *Agent) connect(ctx context.Context) (bool, error) {
 	conn, err := grpc.NewClient(a.serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return fmt.Errorf("dial server: %w", err)
+		return false, fmt.Errorf("dial server: %w", err)
 	}
 	defer conn.Close()
 
 	client := agentpb.NewAgentServiceClient(conn)
 	stream, err := client.Connect(ctx)
 	if err != nil {
-		return fmt.Errorf("open stream: %w", err)
+		return false, fmt.Errorf("open stream: %w", err)
 	}
 
 	// Send register message
@@ -201,22 +207,22 @@ func (a *Agent) connect(ctx context.Context) error {
 		Type:    "register",
 		Payload: regPayload,
 	}); err != nil {
-		return fmt.Errorf("send register: %w", err)
+		return false, fmt.Errorf("send register: %w", err)
 	}
 
 	log.Printf("registered as %q", a.agentID)
 
-	// Connection succeeded — reset init config state
+	// Connection succeeded — reset init config failover state
 	a.initApplied = false
 
 	// Message pump
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
-			return nil
+			return true, nil
 		}
 		if err != nil {
-			return fmt.Errorf("recv: %w", err)
+			return true, fmt.Errorf("recv: %w", err)
 		}
 
 		switch msg.Type {
