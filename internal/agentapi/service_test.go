@@ -8,15 +8,14 @@ import (
 	"testing"
 
 	agentpb "github.com/tjjh89017/vrouter-daemon/gen/go/agentpb"
+	"github.com/tjjh89017/vrouter-daemon/internal/cluster"
 	"github.com/tjjh89017/vrouter-daemon/internal/dispatch"
 	"github.com/tjjh89017/vrouter-daemon/internal/registry"
 	"google.golang.org/grpc/metadata"
 )
 
-// fakeAgentStream implements AgentService_ConnectServer for testing.
 type fakeAgentStream struct {
 	agentpb.AgentService_ConnectServer
-
 	mu       sync.Mutex
 	incoming []*agentpb.AgentMessage
 	outgoing []*agentpb.ServerMessage
@@ -53,50 +52,39 @@ func (f *fakeAgentStream) Context() context.Context {
 	return f.ctx
 }
 
-func mustJSON(v interface{}) []byte {
+func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
 
-func TestConnectRegisterAndStatus(t *testing.T) {
+func setupService(t *testing.T) (*Service, *registry.Registry) {
+	t.Helper()
 	reg := registry.New()
 	disp := dispatch.New(reg)
-	svc := New(reg, disp)
+	clusterReg, redisClient := cluster.TestRegistry(t, "127.0.0.1")
+	broker := cluster.TestBrokerWithPrefix(t, redisClient, clusterReg.TestKeyPrefix())
+	svc := New(reg, disp, clusterReg, broker)
+	return svc, reg
+}
 
+func TestConnectRegisterAndStatus(t *testing.T) {
+	svc, reg := setupService(t)
 	stream := newFakeAgentStream(
-		&agentpb.AgentMessage{
-			Type:    "register",
-			Payload: mustJSON(registerPayload{AgentID: "agent-1", Version: "1.0.0"}),
-		},
-		&agentpb.AgentMessage{
-			Type:    "status",
-			Payload: []byte(`{"up":true}`),
-		},
+		&agentpb.AgentMessage{Type: "register", Payload: mustJSON(registerPayload{AgentID: "agent-1", Version: "1.0.0"})},
+		&agentpb.AgentMessage{Type: "status", Payload: []byte(`{"up":true}`)},
 	)
-
 	err := svc.Connect(stream)
 	if err != nil {
 		t.Fatalf("Connect error: %v", err)
 	}
-
-	// Agent should be deregistered after stream ends
 	if reg.IsConnected("agent-1") {
 		t.Fatal("expected agent-1 to be deregistered after disconnect")
 	}
 }
 
 func TestConnectMissingRegister(t *testing.T) {
-	reg := registry.New()
-	disp := dispatch.New(reg)
-	svc := New(reg, disp)
-
-	stream := newFakeAgentStream(
-		&agentpb.AgentMessage{
-			Type:    "status",
-			Payload: []byte(`{}`),
-		},
-	)
-
+	svc, _ := setupService(t)
+	stream := newFakeAgentStream(&agentpb.AgentMessage{Type: "status", Payload: []byte(`{}`)})
 	err := svc.Connect(stream)
 	if err == nil {
 		t.Fatal("expected error for missing register")
@@ -104,20 +92,11 @@ func TestConnectMissingRegister(t *testing.T) {
 }
 
 func TestConnectDuplicateAgent(t *testing.T) {
-	reg := registry.New()
-	disp := dispatch.New(reg)
-	svc := New(reg, disp)
-
-	// Pre-register agent-1
+	svc, reg := setupService(t)
 	reg.Register("agent-1", nil)
-
 	stream := newFakeAgentStream(
-		&agentpb.AgentMessage{
-			Type:    "register",
-			Payload: mustJSON(registerPayload{AgentID: "agent-1", Version: "1.0.0"}),
-		},
+		&agentpb.AgentMessage{Type: "register", Payload: mustJSON(registerPayload{AgentID: "agent-1", Version: "1.0.0"})},
 	)
-
 	err := svc.Connect(stream)
 	if err == nil {
 		t.Fatal("expected error for duplicate agent")
@@ -125,25 +104,11 @@ func TestConnectDuplicateAgent(t *testing.T) {
 }
 
 func TestConnectConfigAck(t *testing.T) {
-	reg := registry.New()
-	disp := dispatch.New(reg)
-	svc := New(reg, disp)
-
+	svc, _ := setupService(t)
 	stream := newFakeAgentStream(
-		&agentpb.AgentMessage{
-			Type:    "register",
-			Payload: mustJSON(registerPayload{AgentID: "agent-1", Version: "1.0.0"}),
-		},
-		&agentpb.AgentMessage{
-			Type: "config_ack",
-			Payload: mustJSON(configAckPayload{
-				ID:      "req-123",
-				Success: true,
-			}),
-		},
+		&agentpb.AgentMessage{Type: "register", Payload: mustJSON(registerPayload{AgentID: "agent-1", Version: "1.0.0"})},
+		&agentpb.AgentMessage{Type: "config_ack", Payload: mustJSON(configAckPayload{ID: "req-123", Success: true})},
 	)
-
-	// NotifyAck with no waiter should not panic
 	err := svc.Connect(stream)
 	if err != nil {
 		t.Fatalf("Connect error: %v", err)
@@ -151,17 +116,10 @@ func TestConnectConfigAck(t *testing.T) {
 }
 
 func TestConnectEmptyAgentID(t *testing.T) {
-	reg := registry.New()
-	disp := dispatch.New(reg)
-	svc := New(reg, disp)
-
+	svc, _ := setupService(t)
 	stream := newFakeAgentStream(
-		&agentpb.AgentMessage{
-			Type:    "register",
-			Payload: mustJSON(registerPayload{AgentID: "", Version: "1.0.0"}),
-		},
+		&agentpb.AgentMessage{Type: "register", Payload: mustJSON(registerPayload{AgentID: "", Version: "1.0.0"})},
 	)
-
 	err := svc.Connect(stream)
 	if err == nil {
 		t.Fatal("expected error for empty agent_id")

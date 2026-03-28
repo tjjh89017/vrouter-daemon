@@ -1,12 +1,14 @@
 package agentapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 
 	agentpb "github.com/tjjh89017/vrouter-daemon/gen/go/agentpb"
+	"github.com/tjjh89017/vrouter-daemon/internal/cluster"
 	"github.com/tjjh89017/vrouter-daemon/internal/dispatch"
 	"github.com/tjjh89017/vrouter-daemon/internal/registry"
 )
@@ -30,15 +32,19 @@ type configAckPayload struct {
 // Service implements the AgentService gRPC handler.
 type Service struct {
 	agentpb.UnimplementedAgentServiceServer
-	registry   *registry.Registry
-	dispatcher *dispatch.Dispatcher
+	registry    *registry.Registry
+	dispatcher  *dispatch.Dispatcher
+	clusterReg  *cluster.Registry
+	broker      *cluster.Broker
 }
 
 // New creates a new AgentService handler.
-func New(reg *registry.Registry, disp *dispatch.Dispatcher) *Service {
+func New(reg *registry.Registry, disp *dispatch.Dispatcher, clusterReg *cluster.Registry, broker *cluster.Broker) *Service {
 	return &Service{
 		registry:   reg,
 		dispatcher: disp,
+		clusterReg: clusterReg,
+		broker:     broker,
 	}
 }
 
@@ -66,12 +72,45 @@ func (s *Service) Connect(stream agentpb.AgentService_ConnectServer) error {
 	}
 	defer s.registry.Deregister(reg.AgentID)
 
+	// Publish to cluster registry (Redis)
+	nonce, err := s.clusterReg.Register(stream.Context(), reg.AgentID, reg.Version)
+	if err != nil {
+		log.Printf("cluster register %q: %v", reg.AgentID, err)
+	}
+	defer func() {
+		if err := s.clusterReg.Deregister(context.Background(), reg.AgentID, nonce); err != nil {
+			log.Printf("cluster deregister %q: %v", reg.AgentID, err)
+		}
+	}()
+
 	log.Printf("agent %q connected (version: %s)", reg.AgentID, reg.Version)
 	defer log.Printf("agent %q disconnected", reg.AgentID)
 
 	if reg.Version != "" {
 		s.registry.UpdateStatus(reg.AgentID, reg.Version, nil)
 	}
+
+	// Start watching the Redis pending queue for this agent.
+	// When a request arrives via Redis, dispatch it locally through the stream.
+	watchCtx, watchCancel := context.WithCancel(stream.Context())
+	defer watchCancel()
+
+	go s.broker.Watch(watchCtx, reg.AgentID, func(ctx context.Context, req *cluster.Request) *cluster.Result {
+		result, err := s.dispatcher.ApplyConfig(ctx, req.AgentID, req.ConfigPayload)
+		if err != nil {
+			return &cluster.Result{
+				Success:      false,
+				ErrorMessage: err.Error(),
+			}
+		}
+		return &cluster.Result{
+			Success:      result.Success,
+			ExitCode:     result.ExitCode,
+			Stdout:       result.Stdout,
+			Stderr:       result.Stderr,
+			ErrorMessage: result.ErrorMessage,
+		}
+	})
 
 	// Message pump
 	for {
@@ -86,6 +125,10 @@ func (s *Service) Connect(stream agentpb.AgentService_ConnectServer) error {
 		switch msg.Type {
 		case "status":
 			s.registry.UpdateStatus(reg.AgentID, reg.Version, msg.Payload)
+			// Also update status in Redis
+			if err := s.clusterReg.UpdateStatus(stream.Context(), reg.AgentID, reg.Version, msg.Payload); err != nil {
+				log.Printf("cluster update status %q: %v", reg.AgentID, err)
+			}
 		case "config_ack":
 			s.handleConfigAck(reg.AgentID, msg.Payload)
 		default:

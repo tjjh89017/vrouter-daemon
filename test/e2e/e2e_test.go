@@ -14,6 +14,7 @@ import (
 	controlpb "github.com/tjjh89017/vrouter-daemon/gen/go/controlpb"
 	"github.com/tjjh89017/vrouter-daemon/internal/agent"
 	"github.com/tjjh89017/vrouter-daemon/internal/agentapi"
+	"github.com/tjjh89017/vrouter-daemon/internal/cluster"
 	"github.com/tjjh89017/vrouter-daemon/internal/controlapi"
 	"github.com/tjjh89017/vrouter-daemon/internal/dispatch"
 	"github.com/tjjh89017/vrouter-daemon/internal/registry"
@@ -21,22 +22,25 @@ import (
 
 // testEnv sets up a full server + agent environment for testing.
 type testEnv struct {
-	reg            *registry.Registry
-	disp           *dispatch.Dispatcher
-	agentServer    *grpc.Server
-	controlServer  *grpc.Server
-	agentAddr      string
-	controlAddr    string
-	cancelFuncs    []context.CancelFunc
+	reg           *registry.Registry
+	disp          *dispatch.Dispatcher
+	agentServer   *grpc.Server
+	controlServer *grpc.Server
+	agentAddr     string
+	controlAddr   string
+	cancelFuncs   []context.CancelFunc
 }
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 
+	clusterReg, redisClient := cluster.TestRegistry(t, "127.0.0.1")
+	broker := cluster.TestBrokerWithPrefix(t, redisClient, clusterReg.TestKeyPrefix())
+
 	reg := registry.New()
 	disp := dispatch.New(reg)
-	agentSvc := agentapi.New(reg, disp)
-	controlSvc := controlapi.New(reg, disp)
+	agentSvc := agentapi.New(reg, disp, clusterReg, broker)
+	controlSvc := controlapi.New(clusterReg, broker)
 
 	agentServer := grpc.NewServer()
 	agentpb.RegisterAgentServiceServer(agentServer, agentSvc)
@@ -220,20 +224,20 @@ func TestE2E_ConcurrentAgents(t *testing.T) {
 	env := newTestEnv(t)
 	client := env.controlClient(t)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		id := fmt.Sprintf("agent-%d", i)
 		env.startAgent(t, id, func(ctx context.Context, config string) (string, string, int, error) {
 			return "ok", "", 0, nil
 		})
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		waitForAgent(t, client, fmt.Sprintf("agent-%d", i), 3*time.Second)
 	}
 
 	// Apply config to all agents concurrently
 	errCh := make(chan error, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		go func(id string) {
 			resp, err := client.ApplyConfig(context.Background(), &controlpb.ApplyConfigRequest{
 				AgentId:        id,
@@ -252,7 +256,7 @@ func TestE2E_ConcurrentAgents(t *testing.T) {
 		}(fmt.Sprintf("agent-%d", i))
 	}
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if err := <-errCh; err != nil {
 			t.Fatal(err)
 		}
@@ -306,10 +310,9 @@ func TestE2E_AgentDisconnectReconnect(t *testing.T) {
 
 	waitForAgent(t, client, "agent-reconnect", 3*time.Second)
 
-	// Force disconnect by stopping and restarting the agent gRPC server
-	// Instead, cancel the agent and restart it
+	// Cancel the agent context to force disconnect
 	cancel()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	// Agent should be disconnected
 	resp, _ := client.IsConnected(context.Background(), &controlpb.IsConnectedRequest{AgentId: "agent-reconnect"})
@@ -361,10 +364,13 @@ func TestE2E_GetStatus(t *testing.T) {
 }
 
 func TestE2E_GracefulShutdown(t *testing.T) {
+	clusterReg, redisClient := cluster.TestRegistry(t, "127.0.0.1")
+	broker := cluster.TestBrokerWithPrefix(t, redisClient, clusterReg.TestKeyPrefix())
+
 	reg := registry.New()
 	disp := dispatch.New(reg)
-	agentSvc := agentapi.New(reg, disp)
-	controlSvc := controlapi.New(reg, disp)
+	agentSvc := agentapi.New(reg, disp, clusterReg, broker)
+	controlSvc := controlapi.New(clusterReg, broker)
 
 	agentServer := grpc.NewServer()
 	agentpb.RegisterAgentServiceServer(agentServer, agentSvc)
@@ -393,5 +399,4 @@ func TestE2E_GracefulShutdown(t *testing.T) {
 	cancel()
 	agentServer.GracefulStop()
 	controlServer.GracefulStop()
-	// If we get here without hanging, the test passes
 }

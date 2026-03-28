@@ -9,6 +9,8 @@ import (
 type ServerConfig struct {
 	AgentListenAddr   string // address for AgentService (default :50051)
 	ControlListenAddr string // address for ControlService (default :50052)
+	RedisAddr         string // Redis address for cluster registry (required)
+	PodIP             string // this pod's IP for cluster registry (required)
 }
 
 // AgentConfig holds the agent-side configuration.
@@ -28,6 +30,8 @@ func ParseServer() *ServerConfig {
 	cfg := &ServerConfig{}
 	flag.StringVar(&cfg.AgentListenAddr, "agent-listen", envOrDefault("AGENT_LISTEN_ADDR", ":50051"), "AgentService listen address")
 	flag.StringVar(&cfg.ControlListenAddr, "control-listen", envOrDefault("CONTROL_LISTEN_ADDR", ":50052"), "ControlService listen address")
+	flag.StringVar(&cfg.RedisAddr, "redis-addr", envOrDefault("REDIS_ADDR", "localhost:6379"), "Redis address for cluster registry")
+	flag.StringVar(&cfg.PodIP, "pod-ip", envOrDefault("POD_IP", ""), "Pod IP for cluster registry (required)")
 	flag.Parse()
 	return cfg
 }
@@ -46,6 +50,8 @@ func ParseDaemon() *DaemonConfig {
 	cfg := &DaemonConfig{}
 	flag.StringVar(&cfg.Server.AgentListenAddr, "agent-listen", envOrDefault("AGENT_LISTEN_ADDR", ":50051"), "AgentService listen address")
 	flag.StringVar(&cfg.Server.ControlListenAddr, "control-listen", envOrDefault("CONTROL_LISTEN_ADDR", ":50052"), "ControlService listen address")
+	flag.StringVar(&cfg.Server.RedisAddr, "redis-addr", envOrDefault("REDIS_ADDR", "localhost:6379"), "Redis address for cluster registry")
+	flag.StringVar(&cfg.Server.PodIP, "pod-ip", envOrDefault("POD_IP", ""), "Pod IP for cluster registry (required)")
 	flag.StringVar(&cfg.Agent.ServerAddr, "server", envOrDefault("SERVER_ADDR", ""), "AgentService server address (default: connect to local agent-listen)")
 	flag.StringVar(&cfg.Agent.AgentID, "agent-id", envOrDefault("AGENT_ID", ""), "Agent ID (required)")
 	flag.Parse()

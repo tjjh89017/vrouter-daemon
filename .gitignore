@@ -24,6 +24,12 @@ profile.cov
 go.work
 go.work.sum
 
+# Built binaries
+bin/
+vrouter-server
+vrouter-agent
+vrouter-daemon
+
 # env file
 .env
 

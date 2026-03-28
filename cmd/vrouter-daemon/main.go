@@ -14,6 +14,7 @@ import (
 	controlpb "github.com/tjjh89017/vrouter-daemon/gen/go/controlpb"
 	"github.com/tjjh89017/vrouter-daemon/internal/agent"
 	"github.com/tjjh89017/vrouter-daemon/internal/agentapi"
+	"github.com/tjjh89017/vrouter-daemon/internal/cluster"
 	"github.com/tjjh89017/vrouter-daemon/internal/config"
 	"github.com/tjjh89017/vrouter-daemon/internal/controlapi"
 	"github.com/tjjh89017/vrouter-daemon/internal/dispatch"
@@ -26,11 +27,25 @@ func main() {
 	if cfg.Agent.AgentID == "" {
 		log.Fatal("--agent-id is required")
 	}
+	if cfg.Server.PodIP == "" {
+		log.Fatal("--pod-ip is required (set via POD_IP env from Downward API)")
+	}
+
+	// Cluster registry + broker (Redis)
+	clusterReg, redisClient, err := cluster.NewRegistry(cfg.Server.RedisAddr, cfg.Server.PodIP)
+	if err != nil {
+		log.Fatalf("failed to connect to Redis at %s: %v", cfg.Server.RedisAddr, err)
+	}
+	defer clusterReg.Close()
+	log.Printf("connected to Redis at %s", cfg.Server.RedisAddr)
+
+	broker := cluster.NewBroker(redisClient)
 
 	reg := registry.New()
 	disp := dispatch.New(reg)
-	agentSvc := agentapi.New(reg, disp)
-	controlSvc := controlapi.New(reg, disp)
+
+	agentSvc := agentapi.New(reg, disp, clusterReg, broker)
+	controlSvc := controlapi.New(clusterReg, broker)
 
 	// Agent-facing gRPC server
 	agentServer := grpc.NewServer()
