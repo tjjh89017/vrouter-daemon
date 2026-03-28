@@ -119,20 +119,14 @@ func (a *Agent) Run(ctx context.Context) error {
 	failures := 0
 
 	for {
-		wasConnected, err := a.connect(ctx)
+		a.connect(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		// If we were connected (registered successfully), reset backoff
-		if wasConnected {
-			bo.Reset()
-			failures = 0
-		}
-
 		failures++
 		wait := bo.Next()
-		log.Printf("disconnected from server: %v, reconnecting in %v (failures=%d)", err, wait, failures)
+		log.Printf("disconnected from server, reconnecting in %v (failures=%d)", wait, failures)
 
 		// Apply init config after too many consecutive failures
 		if a.shouldApplyInitConfig(failures) {
@@ -182,20 +176,17 @@ func (a *Agent) applyInitConfig(ctx context.Context) {
 	a.initApplied = true
 }
 
-// connect dials the server, registers, and processes messages.
-// Returns (true, err) if registration succeeded (was connected),
-// (false, err) if it failed before registration.
-func (a *Agent) connect(ctx context.Context) (bool, error) {
+func (a *Agent) connect(ctx context.Context) error {
 	conn, err := grpc.NewClient(a.serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return false, fmt.Errorf("dial server: %w", err)
+		return fmt.Errorf("dial server: %w", err)
 	}
 	defer conn.Close()
 
 	client := agentpb.NewAgentServiceClient(conn)
 	stream, err := client.Connect(ctx)
 	if err != nil {
-		return false, fmt.Errorf("open stream: %w", err)
+		return fmt.Errorf("open stream: %w", err)
 	}
 
 	// Send register message
@@ -207,22 +198,19 @@ func (a *Agent) connect(ctx context.Context) (bool, error) {
 		Type:    "register",
 		Payload: regPayload,
 	}); err != nil {
-		return false, fmt.Errorf("send register: %w", err)
+		return fmt.Errorf("send register: %w", err)
 	}
 
 	log.Printf("registered as %q", a.agentID)
-
-	// Connection succeeded — reset init config failover state
-	a.initApplied = false
 
 	// Message pump
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
-			return true, nil
+			return nil
 		}
 		if err != nil {
-			return true, fmt.Errorf("recv: %w", err)
+			return fmt.Errorf("recv: %w", err)
 		}
 
 		switch msg.Type {
