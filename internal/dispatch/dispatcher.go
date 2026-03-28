@@ -21,9 +21,11 @@ type ConfigResult struct {
 }
 
 // applyConfigPayload is the JSON payload sent to the agent.
+// Matches VRouterConfigSpec: config block + configure-mode commands.
 type applyConfigPayload struct {
-	ID     string `json:"id"`
-	Config string `json:"config"`
+	ID       string `json:"id"`
+	Config   string `json:"config,omitempty"`
+	Commands string `json:"commands,omitempty"`
 }
 
 // Dispatcher correlates apply_config requests with config_ack responses.
@@ -43,6 +45,7 @@ func New(reg *registry.Registry) *Dispatcher {
 
 // ApplyConfig sends an apply_config message to the agent and blocks until the
 // agent responds with a config_ack or the context is cancelled.
+// configPayload is a JSON object with "config" and/or "commands" fields.
 func (d *Dispatcher) ApplyConfig(ctx context.Context, agentID string, configPayload []byte) (*ConfigResult, error) {
 	entry := d.registry.GetEntry(agentID)
 	if entry == nil {
@@ -62,9 +65,20 @@ func (d *Dispatcher) ApplyConfig(ctx context.Context, agentID string, configPayl
 		d.mu.Unlock()
 	}()
 
+	// Parse the incoming config payload to extract config + commands
+	var incoming struct {
+		Config   string `json:"config"`
+		Commands string `json:"commands"`
+	}
+	if err := json.Unmarshal(configPayload, &incoming); err != nil {
+		// Fallback: treat entire payload as commands for backward compat
+		incoming.Commands = string(configPayload)
+	}
+
 	payload, err := json.Marshal(applyConfigPayload{
-		ID:     reqID,
-		Config: string(configPayload),
+		ID:       reqID,
+		Config:   incoming.Config,
+		Commands: incoming.Commands,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal apply_config payload: %w", err)

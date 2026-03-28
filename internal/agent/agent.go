@@ -22,9 +22,11 @@ type registerPayload struct {
 }
 
 // applyConfigRequest is the JSON body of an "apply_config" message from server.
+// Config and Commands match VRouterConfigSpec format.
 type applyConfigRequest struct {
-	ID     string `json:"id"`
-	Config string `json:"config"`
+	ID       string `json:"id"`
+	Config   string `json:"config,omitempty"`
+	Commands string `json:"commands,omitempty"`
 }
 
 // configAckPayload is the JSON body of a "config_ack" response.
@@ -233,10 +235,31 @@ func (a *Agent) handleApplyConfig(ctx context.Context, stream agentpb.AgentServi
 		return
 	}
 
-	stdout, stderr, exitCode, err := a.configHandler(ctx, req.Config)
+	// Render the vbash script, merging with init config if present
+	script, err := a.renderApplyScript(req.Config, req.Commands)
+	if err != nil {
+		log.Printf("failed to render apply script: %v", err)
+		a.sendConfigAck(stream, req.ID, "", "", -1, err)
+		return
+	}
 
+	stdout, stderr, exitCode, err := a.configHandler(ctx, string(script))
+
+	a.sendConfigAck(stream, req.ID, stdout, stderr, exitCode, err)
+}
+
+// renderApplyScript generates a vbash script from pushed config/commands,
+// merged with init config (init config commands appended last = highest priority).
+func (a *Agent) renderApplyScript(pushedConfig, pushedCommands string) ([]byte, error) {
+	if a.initConfig != nil && !a.initConfig.IsEmpty() {
+		return a.initConfig.RenderMergedScript(pushedConfig, pushedCommands)
+	}
+	return renderScript(pushedConfig, pushedCommands)
+}
+
+func (a *Agent) sendConfigAck(stream agentpb.AgentService_ConnectClient, reqID, stdout, stderr string, exitCode int, err error) {
 	ack := configAckPayload{
-		ID:       req.ID,
+		ID:       reqID,
 		Success:  err == nil && exitCode == 0,
 		ExitCode: exitCode,
 		Stdout:   stdout,

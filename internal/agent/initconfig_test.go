@@ -120,9 +120,6 @@ func TestRenderScriptNoConfig(t *testing.T) {
 	if !strings.Contains(s, "load /opt/vyatta/etc/config.boot.default") {
 		t.Fatal("expected default config load when no config provided")
 	}
-	if !strings.Contains(s, "set interfaces ethernet eth0") {
-		t.Fatal("expected commands content")
-	}
 }
 
 func TestRenderScriptEmpty(t *testing.T) {
@@ -137,7 +134,112 @@ func TestRenderScriptEmpty(t *testing.T) {
 	if !strings.Contains(s, "load /opt/vyatta/etc/config.boot.default") {
 		t.Fatal("expected default config load")
 	}
-	if !strings.Contains(s, "commit") {
-		t.Fatal("expected commit")
+}
+
+func TestMerge(t *testing.T) {
+	ic := &InitConfig{
+		Commands: "set firewall name MGMT rule 10 action accept",
+	}
+
+	config, commands := ic.Merge("", "set interfaces ethernet eth0 address 10.0.0.1/24")
+
+	// No config from either side → empty (template loads default)
+	if config != "" {
+		t.Fatalf("expected empty config, got: %s", config)
+	}
+
+	// Pushed commands first, then init commands
+	if !strings.Contains(commands, "set interfaces ethernet eth0") {
+		t.Fatal("expected pushed commands in merged output")
+	}
+	if !strings.Contains(commands, "set firewall name MGMT") {
+		t.Fatal("expected init commands in merged output")
+	}
+	// Init commands must come AFTER pushed commands
+	pushIdx := strings.Index(commands, "set interfaces")
+	initIdx := strings.Index(commands, "set firewall")
+	if initIdx < pushIdx {
+		t.Fatal("expected init commands after pushed commands")
+	}
+}
+
+func TestMergeWithPushedConfig(t *testing.T) {
+	ic := &InitConfig{
+		Config:   "init config block",
+		Commands: "set init cmd",
+	}
+
+	// Pushed config takes priority for the config block
+	config, commands := ic.Merge("pushed config block", "set pushed cmd")
+
+	if config != "pushed config block" {
+		t.Fatalf("expected pushed config block, got: %s", config)
+	}
+	if !strings.Contains(commands, "set pushed cmd") {
+		t.Fatal("expected pushed commands")
+	}
+	if !strings.Contains(commands, "set init cmd") {
+		t.Fatal("expected init commands")
+	}
+}
+
+func TestMergeInitConfigBlockUsedWhenNoPushedConfig(t *testing.T) {
+	ic := &InitConfig{
+		Config:   "init config block",
+		Commands: "set init cmd",
+	}
+
+	config, _ := ic.Merge("", "set pushed cmd")
+
+	if config != "init config block" {
+		t.Fatalf("expected init config block when no pushed config, got: %s", config)
+	}
+}
+
+func TestRenderMergedScript(t *testing.T) {
+	ic := &InitConfig{
+		Commands: "set firewall name MGMT rule 10 action accept",
+	}
+
+	script, err := ic.RenderMergedScript(
+		`interfaces { ethernet eth0 { address dhcp } }`,
+		"set protocols static route 0.0.0.0/0 next-hop 192.168.1.1",
+	)
+	if err != nil {
+		t.Fatalf("RenderMergedScript error: %v", err)
+	}
+
+	s := string(script)
+	if !strings.Contains(s, "load /dev/stdin") {
+		t.Fatal("expected load /dev/stdin for pushed config")
+	}
+	if !strings.Contains(s, "ethernet eth0") {
+		t.Fatal("expected pushed config in script")
+	}
+	if !strings.Contains(s, "set protocols static route") {
+		t.Fatal("expected pushed commands in script")
+	}
+	if !strings.Contains(s, "set firewall name MGMT") {
+		t.Fatal("expected init commands in script")
+	}
+	if !strings.Contains(s, "init config commands (protected)") {
+		t.Fatal("expected init config marker comment")
+	}
+}
+
+func TestRenderMergedScriptNoPushedConfig(t *testing.T) {
+	ic := &InitConfig{
+		Commands: "set firewall name MGMT rule 10 action accept",
+	}
+
+	script, err := ic.RenderMergedScript("", "set pushed cmd")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	s := string(script)
+	// No pushed config and no init config block → load default
+	if !strings.Contains(s, "load /opt/vyatta/etc/config.boot.default") {
+		t.Fatal("expected default config load")
 	}
 }

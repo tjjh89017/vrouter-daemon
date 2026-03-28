@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"os"
+	"strings"
 	"text/template"
 
 	"gopkg.in/yaml.v3"
@@ -14,7 +15,7 @@ import (
 //
 // The structure mirrors VRouterConfigSpec from vrouter-operator:
 //   - Config:   VyOS config block loaded via "load /dev/stdin"
-//   - Commands: VyOS commands executed in configure mode after load
+//   - Commands: VyOS configure-mode commands executed in configure mode after load
 //
 // YAML format:
 //
@@ -32,14 +33,20 @@ type InitConfig struct {
 	Commands string `yaml:"commands"` // VyOS configure-mode commands (optional)
 }
 
-var initScriptTmpl = template.Must(template.New("init").Parse(`#!/bin/vbash
+// scriptData is the data passed to the vbash script template.
+type scriptData struct {
+	Config   string
+	Commands string
+}
+
+var applyScriptTmpl = template.Must(template.New("apply").Parse(`#!/bin/vbash
 if [ "$(id -g -n)" != 'vyattacfg' ] ; then
     exec sg vyattacfg -c "/bin/vbash $(readlink -f $0) $@"
 fi
 source /opt/vyatta/etc/functions/script-template
 configure
 
-# --- init config section ---
+# --- config section ---
 {{- if .Config }}
 load /dev/stdin <<'VYOS_CONFIG_EOF'
 {{ .Config }}
@@ -48,7 +55,7 @@ VYOS_CONFIG_EOF
 load /opt/vyatta/etc/config.boot.default
 {{- end }}
 
-# --- init commands section ---
+# --- commands section ---
 {{- if .Commands }}
 {{ .Commands }}
 {{- end }}
@@ -82,12 +89,54 @@ func (ic *InitConfig) IsEmpty() bool {
 	return ic.Config == "" && ic.Commands == ""
 }
 
-// RenderScript generates a vbash script that applies the init config.
-// The script format matches the vrouter-operator's apply script:
-// configure → load config → run commands → commit → save.
+// RenderScript generates a vbash script from the init config alone (failover).
+// If Config is empty, loads the VyOS default config.
 func (ic *InitConfig) RenderScript() ([]byte, error) {
+	return renderScript(ic.Config, ic.Commands)
+}
+
+// Merge combines pushed config/commands with init config.
+// Init config commands are appended AFTER pushed commands (run last = highest priority).
+// For the config block: pushed config is used if present, otherwise init config's,
+// otherwise loads VyOS default.
+func (ic *InitConfig) Merge(pushedConfig, pushedCommands string) (mergedConfig, mergedCommands string) {
+	// Config block: use pushed if available, else init config's
+	switch {
+	case pushedConfig != "":
+		mergedConfig = pushedConfig
+	case ic.Config != "":
+		mergedConfig = ic.Config
+	default:
+		mergedConfig = "" // template will load default
+	}
+
+	// Commands: pushed first, then init config commands (init wins on conflict)
+	var parts []string
+	if pushedCommands != "" {
+		parts = append(parts, strings.TrimRight(pushedCommands, "\n"))
+	}
+	if ic.Commands != "" {
+		parts = append(parts, "# --- init config commands (protected) ---")
+		parts = append(parts, strings.TrimRight(ic.Commands, "\n"))
+	}
+	mergedCommands = strings.Join(parts, "\n")
+
+	return mergedConfig, mergedCommands
+}
+
+// RenderMergedScript generates a vbash script with pushed config/commands
+// merged with init config.
+func (ic *InitConfig) RenderMergedScript(pushedConfig, pushedCommands string) ([]byte, error) {
+	config, commands := ic.Merge(pushedConfig, pushedCommands)
+	return renderScript(config, commands)
+}
+
+func renderScript(config, commands string) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := initScriptTmpl.Execute(&buf, ic); err != nil {
+	if err := applyScriptTmpl.Execute(&buf, scriptData{
+		Config:   config,
+		Commands: commands,
+	}); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

@@ -45,7 +45,7 @@ func TestApplyConfigAndAck(t *testing.T) {
 		defer close(done)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		result, applyErr = d.ApplyConfig(ctx, "agent-1", []byte("set interfaces eth0 address dhcp"))
+		result, applyErr = d.ApplyConfig(ctx, "agent-1", []byte(`{"commands":"set interfaces eth0 address dhcp"}`))
 	}()
 
 	// Wait for the message to be sent
@@ -98,7 +98,7 @@ func TestApplyConfigTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := d.ApplyConfig(ctx, "agent-1", []byte("set foo"))
+	_, err := d.ApplyConfig(ctx, "agent-1", []byte(`{"commands":"set foo"}`))
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -112,7 +112,7 @@ func TestApplyConfigAgentNotConnected(t *testing.T) {
 	d := New(reg)
 
 	ctx := context.Background()
-	_, err := d.ApplyConfig(ctx, "agent-missing", []byte("set foo"))
+	_, err := d.ApplyConfig(ctx, "agent-missing", []byte(`{"commands":"set foo"}`))
 	if err == nil {
 		t.Fatal("expected error for missing agent")
 	}

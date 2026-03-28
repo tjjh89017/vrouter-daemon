@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,14 +127,14 @@ func TestE2E_ApplyConfigSuccess(t *testing.T) {
 	client := env.controlClient(t)
 
 	env.startAgent(t, "agent-1", func(ctx context.Context, config string) (string, string, int, error) {
-		return "applied: " + config, "", 0, nil
+		return config, "", 0, nil
 	})
 
 	waitForAgent(t, client, "agent-1", 3*time.Second)
 
 	resp, err := client.ApplyConfig(context.Background(), &controlpb.ApplyConfigRequest{
 		AgentId:        "agent-1",
-		ConfigPayload:  []byte("set interfaces eth0 address dhcp"),
+		ConfigPayload:  []byte(`{"commands":"set interfaces eth0 address dhcp"}`),
 		TimeoutSeconds: 5,
 	})
 	if err != nil {
@@ -142,8 +143,12 @@ func TestE2E_ApplyConfigSuccess(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success, got error: %s", resp.ErrorMessage)
 	}
-	if resp.Stdout != "applied: set interfaces eth0 address dhcp" {
-		t.Fatalf("unexpected stdout: %q", resp.Stdout)
+	// Agent renders a vbash script containing the commands
+	if !strings.Contains(resp.Stdout, "set interfaces eth0 address dhcp") {
+		t.Fatalf("expected stdout to contain commands, got: %q", resp.Stdout)
+	}
+	if !strings.Contains(resp.Stdout, "#!/bin/vbash") {
+		t.Fatalf("expected stdout to be a vbash script, got: %q", resp.Stdout)
 	}
 }
 
@@ -159,7 +164,7 @@ func TestE2E_ApplyConfigFailure(t *testing.T) {
 
 	resp, err := client.ApplyConfig(context.Background(), &controlpb.ApplyConfigRequest{
 		AgentId:        "agent-1",
-		ConfigPayload:  []byte("bad-command"),
+		ConfigPayload:  []byte(`{"commands":"bad-command"}`),
 		TimeoutSeconds: 5,
 	})
 	if err != nil {
@@ -190,7 +195,7 @@ func TestE2E_ApplyConfigTimeout(t *testing.T) {
 
 	_, err := client.ApplyConfig(ctx, &controlpb.ApplyConfigRequest{
 		AgentId:        "agent-1",
-		ConfigPayload:  []byte("slow-config"),
+		ConfigPayload:  []byte(`{"commands":"slow-config"}`),
 		TimeoutSeconds: 1,
 	})
 	if err == nil {
@@ -212,7 +217,7 @@ func TestE2E_AgentNotConnected(t *testing.T) {
 
 	_, err = client.ApplyConfig(context.Background(), &controlpb.ApplyConfigRequest{
 		AgentId:        "agent-missing",
-		ConfigPayload:  []byte("set foo"),
+		ConfigPayload:  []byte(`{"commands":"set foo"}`),
 		TimeoutSeconds: 1,
 	})
 	if err == nil {
@@ -241,7 +246,7 @@ func TestE2E_ConcurrentAgents(t *testing.T) {
 		go func(id string) {
 			resp, err := client.ApplyConfig(context.Background(), &controlpb.ApplyConfigRequest{
 				AgentId:        id,
-				ConfigPayload:  []byte("set test"),
+				ConfigPayload:  []byte(`{"commands":"set test"}`),
 				TimeoutSeconds: 5,
 			})
 			if err != nil {
@@ -283,7 +288,7 @@ func TestE2E_DuplicateAgentID(t *testing.T) {
 	// First agent should still be the one handling requests
 	resp, err := client.ApplyConfig(context.Background(), &controlpb.ApplyConfigRequest{
 		AgentId:        "agent-dup",
-		ConfigPayload:  []byte("test"),
+		ConfigPayload:  []byte(`{"commands":"test"}`),
 		TimeoutSeconds: 5,
 	})
 	if err != nil {
@@ -336,7 +341,7 @@ func TestE2E_AgentDisconnectReconnect(t *testing.T) {
 
 	applyResp, err := client.ApplyConfig(context.Background(), &controlpb.ApplyConfigRequest{
 		AgentId:        "agent-reconnect",
-		ConfigPayload:  []byte("test"),
+		ConfigPayload:  []byte(`{"commands":"test"}`),
 		TimeoutSeconds: 5,
 	})
 	if err != nil {
