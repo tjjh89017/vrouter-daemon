@@ -16,12 +16,13 @@ spec:
         app: vrouter-daemon
     spec:
       containers:
-        - name: vrouter-daemon
-          image: vrouter-daemon:latest
+        - name: vrouter-server
+          image: ghcr.io/tjjh89017/vrouter-server:latest
           args:
             - --agent-listen=:50051
             - --control-listen=:50052
-            - --redis-addr=redis.vrouter-system.svc:6379
+            - --redis-sentinel-addrs=redis-sentinel.vrouter-system.svc:26379
+            - --redis-master-name=vrouter-redis
           env:
             - name: POD_IP
               valueFrom:

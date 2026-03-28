@@ -1,0 +1,152 @@
+---
+# Headless service for StatefulSet DNS (redis-0.redis-headless, etc.)
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-headless
+  namespace: vrouter-system
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+# Redis StatefulSet: 1 master (redis-0) + 2 replicas
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: vrouter-system
+spec:
+  serviceName: redis-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              if [ "$(hostname)" = "redis-0" ]; then
+                exec redis-server --appendonly yes --save 60 1
+              else
+                exec redis-server --appendonly yes --save 60 1 \
+                  --replicaof redis-0.redis-headless.vrouter-system.svc 6379
+              fi
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+# Sentinel Deployment: 3 instances for quorum
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-sentinel
+  namespace: vrouter-system
+  labels:
+    app: redis-sentinel
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-sentinel
+  template:
+    metadata:
+      labels:
+        app: redis-sentinel
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: redis-sentinel
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-for-master
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until redis-cli -h redis-0.redis-headless.vrouter-system.svc ping 2>/dev/null; do
+                echo "waiting for redis master..."
+                sleep 2
+              done
+      containers:
+        - name: sentinel
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              cat > /tmp/sentinel.conf <<EOF
+              sentinel monitor vrouter-redis redis-0.redis-headless.vrouter-system.svc 6379 2
+              sentinel down-after-milliseconds vrouter-redis 5000
+              sentinel failover-timeout vrouter-redis 10000
+              sentinel parallel-syncs vrouter-redis 1
+              EOF
+              exec redis-sentinel /tmp/sentinel.conf
+          ports:
+            - containerPort: 26379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "-p", "26379", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+# Sentinel service for vrouter-server to discover Redis master
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel
+  namespace: vrouter-system
+spec:
+  selector:
+    app: redis-sentinel
+  ports:
+    - name: sentinel
+      port: 26379
+      targetPort: 26379
