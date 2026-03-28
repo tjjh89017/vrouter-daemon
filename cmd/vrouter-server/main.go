@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-	cfg := config.Parse()
+	cfg := config.ParseServer()
 
 	reg := registry.New()
 	disp := dispatch.New(reg)
