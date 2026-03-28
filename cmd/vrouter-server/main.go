@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
 	agentpb "github.com/tjjh89017/vrouter-daemon/gen/go/agentpb"
@@ -30,12 +31,25 @@ func main() {
 	}
 
 	// Cluster registry + broker (Redis)
-	clusterReg, redisClient, err := cluster.NewRegistry(cfg.RedisAddr, cfg.PodIP)
-	if err != nil {
-		log.Fatalf("failed to connect to Redis at %s: %v", cfg.RedisAddr, err)
+	var (
+		clusterReg  *cluster.Registry
+		redisClient redis.UniversalClient
+		err         error
+	)
+	if cfg.UseSentinel() {
+		clusterReg, redisClient, err = cluster.NewSentinelRegistry(cfg.SentinelAddrs(), cfg.RedisMasterName, cfg.PodIP)
+		if err != nil {
+			log.Fatalf("failed to connect to Redis Sentinel: %v", err)
+		}
+		log.Printf("connected to Redis via Sentinel (master=%s)", cfg.RedisMasterName)
+	} else {
+		clusterReg, redisClient, err = cluster.NewRegistry(cfg.RedisAddr, cfg.PodIP)
+		if err != nil {
+			log.Fatalf("failed to connect to Redis at %s: %v", cfg.RedisAddr, err)
+		}
+		log.Printf("connected to Redis at %s", cfg.RedisAddr)
 	}
 	defer clusterReg.Close()
-	log.Printf("connected to Redis at %s", cfg.RedisAddr)
 
 	broker := cluster.NewBroker(redisClient)
 

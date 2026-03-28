@@ -29,7 +29,7 @@ func TestRedisClient(t *testing.T) *redis.Client {
 }
 
 // TestRegistry creates a cluster Registry with a unique key prefix for testing.
-func TestRegistry(t *testing.T, podIP string) (*Registry, *redis.Client) {
+func TestRegistry(t *testing.T, podIP string) (*Registry, redis.UniversalClient) {
 	t.Helper()
 	client := TestRedisClient(t)
 	prefix := fmt.Sprintf("test:%d:", rand.Int63())
@@ -53,7 +53,7 @@ func TestRegistry(t *testing.T, podIP string) (*Registry, *redis.Client) {
 }
 
 // TestBrokerWithPrefix creates a Broker with a unique key prefix for testing.
-func TestBrokerWithPrefix(t *testing.T, client *redis.Client, prefix string) *Broker {
+func TestBrokerWithPrefix(t *testing.T, client redis.UniversalClient, prefix string) *Broker {
 	t.Helper()
 	return &Broker{
 		client:        client,

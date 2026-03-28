@@ -30,7 +30,7 @@ type Result struct {
 
 // Broker handles request-response correlation through Redis.
 type Broker struct {
-	client        *redis.Client
+	client        redis.UniversalClient
 	pendingPrefix string // "vrouter:pending:"
 	reqPrefix     string // "vrouter:req:"
 	donePrefix    string // "vrouter:done:"
@@ -38,7 +38,7 @@ type Broker struct {
 }
 
 // NewBroker creates a new Broker.
-func NewBroker(client *redis.Client) *Broker {
+func NewBroker(client redis.UniversalClient) *Broker {
 	return &Broker{
 		client:        client,
 		pendingPrefix: "vrouter:pending:",

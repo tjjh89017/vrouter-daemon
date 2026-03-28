@@ -3,14 +3,17 @@ package config
 import (
 	"flag"
 	"os"
+	"strings"
 )
 
 // ServerConfig holds the server-side configuration.
 type ServerConfig struct {
-	AgentListenAddr   string // address for AgentService (default :50051)
-	ControlListenAddr string // address for ControlService (default :50052)
-	RedisAddr         string // Redis address for cluster registry (required)
-	PodIP             string // this pod's IP for cluster registry (required)
+	AgentListenAddr    string // address for AgentService (default :50051)
+	ControlListenAddr  string // address for ControlService (default :50052)
+	RedisAddr          string // Redis address for standalone mode
+	RedisSentinelAddrs string // comma-separated Sentinel addresses (HA mode)
+	RedisMasterName    string // Sentinel master name (default "vrouter-redis")
+	PodIP              string // this pod's IP for cluster registry (required)
 }
 
 // AgentConfig holds the agent-side configuration.
@@ -26,7 +29,9 @@ func ParseServer() *ServerConfig {
 	cfg := &ServerConfig{}
 	flag.StringVar(&cfg.AgentListenAddr, "agent-listen", envOrDefault("AGENT_LISTEN_ADDR", ":50051"), "AgentService listen address")
 	flag.StringVar(&cfg.ControlListenAddr, "control-listen", envOrDefault("CONTROL_LISTEN_ADDR", ":50052"), "ControlService listen address")
-	flag.StringVar(&cfg.RedisAddr, "redis-addr", envOrDefault("REDIS_ADDR", "localhost:6379"), "Redis address for cluster registry")
+	flag.StringVar(&cfg.RedisAddr, "redis-addr", envOrDefault("REDIS_ADDR", "localhost:6379"), "Redis address (standalone mode)")
+	flag.StringVar(&cfg.RedisSentinelAddrs, "redis-sentinel-addrs", envOrDefault("REDIS_SENTINEL_ADDRS", ""), "Comma-separated Sentinel addresses (HA mode)")
+	flag.StringVar(&cfg.RedisMasterName, "redis-master-name", envOrDefault("REDIS_MASTER_NAME", "vrouter-redis"), "Sentinel master name")
 	flag.StringVar(&cfg.PodIP, "pod-ip", envOrDefault("POD_IP", ""), "Pod IP for cluster registry (required)")
 	flag.Parse()
 	return cfg
@@ -41,6 +46,16 @@ func ParseAgent() *AgentConfig {
 	flag.IntVar(&cfg.InitMaxRetries, "init-max-retries", 3, "Consecutive connection failures before applying init config")
 	flag.Parse()
 	return cfg
+}
+
+// UseSentinel returns true if Sentinel addresses are configured.
+func (c *ServerConfig) UseSentinel() bool {
+	return c.RedisSentinelAddrs != ""
+}
+
+// SentinelAddrs returns the parsed Sentinel addresses.
+func (c *ServerConfig) SentinelAddrs() []string {
+	return strings.Split(c.RedisSentinelAddrs, ",")
 }
 
 func envOrDefault(key, defaultVal string) string {

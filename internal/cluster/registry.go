@@ -21,18 +21,30 @@ type AgentInfo struct {
 // Registry is a Redis-backed cluster registry that stores agent metadata.
 // Each agent is a Redis hash: {prefix}{id} with fields pod_ip, version, status, nonce.
 type Registry struct {
-	client    *redis.Client
+	client    redis.UniversalClient
 	podIP     string
 	ttl       time.Duration
 	keyPrefix string // e.g. "vrouter:agent:"
 }
 
-// NewRegistry creates a new cluster Registry.
-func NewRegistry(redisAddr, podIP string) (*Registry, *redis.Client, error) {
+// NewRegistry creates a cluster Registry with a standalone Redis connection.
+func NewRegistry(redisAddr, podIP string) (*Registry, redis.UniversalClient, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 	})
+	return newRegistryWithClient(client, podIP)
+}
 
+// NewSentinelRegistry creates a cluster Registry using Redis Sentinel for HA.
+func NewSentinelRegistry(sentinelAddrs []string, masterName, podIP string) (*Registry, redis.UniversalClient, error) {
+	client := redis.NewFailoverClient(&redis.FailoverOptions{
+		MasterName:    masterName,
+		SentinelAddrs: sentinelAddrs,
+	})
+	return newRegistryWithClient(client, podIP)
+}
+
+func newRegistryWithClient(client redis.UniversalClient, podIP string) (*Registry, redis.UniversalClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
