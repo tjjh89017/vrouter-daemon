@@ -166,8 +166,8 @@ Creates in `vrouter-system` namespace:
 ## CI/CD
 
 GitHub Actions pipeline (`.github/workflows/ci.yaml`):
-- **lint**: `gofmt` check + `go vet`
-- **test**: `go test -race` with Redis service container
+- **lint**: `golangci-lint` (errcheck + default linters)
+- **test**: `go test -race` with Redis service container, uploads coverage artifact
 - **build**: cross-compile `linux/amd64` + `linux/arm64`, upload artifacts
 - **push-image**: multi-arch container to `ghcr.io/tjjh89017/vrouter-server` (on main/tags)
 
@@ -184,8 +184,8 @@ make build
 go test ./...
 
 # Lint
-go fmt ./...
-go vet ./...
+make lint       # runs golangci-lint
+go fmt ./...    # format only
 ```
 
 ## License
