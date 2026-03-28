@@ -1,4 +1,4 @@
-.PHONY: proto build clean
+.PHONY: proto build lint clean
 
 PROTO_DIR := proto
 GEN_DIR := gen/go
@@ -14,6 +14,9 @@ proto:
 build: proto
 	go build -o bin/vrouter-server ./cmd/vrouter-server/
 	go build -o bin/vrouter-agent ./cmd/vrouter-agent/
+
+lint:
+	golangci-lint run
 
 clean:
 	rm -rf bin/ $(GEN_DIR)/controlpb $(GEN_DIR)/agentpb
