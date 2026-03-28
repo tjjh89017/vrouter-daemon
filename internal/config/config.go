@@ -18,10 +18,11 @@ type ServerConfig struct {
 
 // AgentConfig holds the agent-side configuration.
 type AgentConfig struct {
-	ServerAddr     string // address of the AgentService to connect to
-	AgentID        string // unique identifier for this agent
-	InitConfigPath string // path to init config YAML file (config + commands)
-	InitMaxRetries int    // consecutive failures before applying init config
+	ServerAddr       string // address of the AgentService to connect to
+	AgentID          string // unique identifier for this agent
+	InitConfigPath   string // path to init config YAML file (config + commands)
+	InitMaxRetries   int    // consecutive failures before policy kicks in
+	DisconnectPolicy string // "keep" (default) or "rollback"
 }
 
 // ParseServer reads server configuration from flags and environment variables.
@@ -43,7 +44,8 @@ func ParseAgent() *AgentConfig {
 	flag.StringVar(&cfg.ServerAddr, "server", envOrDefault("SERVER_ADDR", "localhost:50051"), "AgentService server address")
 	flag.StringVar(&cfg.AgentID, "agent-id", envOrDefault("AGENT_ID", ""), "Agent ID (required)")
 	flag.StringVar(&cfg.InitConfigPath, "init-config", envOrDefault("INIT_CONFIG", ""), "Path to init config YAML file (config + commands)")
-	flag.IntVar(&cfg.InitMaxRetries, "init-max-retries", 3, "Consecutive connection failures before applying init config")
+	flag.IntVar(&cfg.InitMaxRetries, "init-max-retries", 3, "Consecutive connection failures before disconnect policy kicks in")
+	flag.StringVar(&cfg.DisconnectPolicy, "disconnect-policy", envOrDefault("DISCONNECT_POLICY", "keep"), "Disconnect policy: keep (default) or rollback")
 	flag.Parse()
 	return cfg
 }

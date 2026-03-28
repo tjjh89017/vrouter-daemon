@@ -23,9 +23,10 @@ type ConfigResult struct {
 // applyConfigPayload is the JSON payload sent to the agent.
 // Matches VRouterConfigSpec: config block + configure-mode commands.
 type applyConfigPayload struct {
-	ID       string `json:"id"`
-	Config   string `json:"config,omitempty"`
-	Commands string `json:"commands,omitempty"`
+	ID               string `json:"id"`
+	Config           string `json:"config,omitempty"`
+	Commands         string `json:"commands,omitempty"`
+	DisconnectPolicy string `json:"disconnect_policy,omitempty"`
 }
 
 // Dispatcher correlates apply_config requests with config_ack responses.
@@ -65,10 +66,11 @@ func (d *Dispatcher) ApplyConfig(ctx context.Context, agentID string, configPayl
 		d.mu.Unlock()
 	}()
 
-	// Parse the incoming config payload to extract config + commands
+	// Parse the incoming config payload to extract config + commands + policy
 	var incoming struct {
-		Config   string `json:"config"`
-		Commands string `json:"commands"`
+		Config           string `json:"config"`
+		Commands         string `json:"commands"`
+		DisconnectPolicy string `json:"disconnect_policy"`
 	}
 	if err := json.Unmarshal(configPayload, &incoming); err != nil {
 		// Fallback: treat entire payload as commands for backward compat
@@ -76,9 +78,10 @@ func (d *Dispatcher) ApplyConfig(ctx context.Context, agentID string, configPayl
 	}
 
 	payload, err := json.Marshal(applyConfigPayload{
-		ID:       reqID,
-		Config:   incoming.Config,
-		Commands: incoming.Commands,
+		ID:               reqID,
+		Config:           incoming.Config,
+		Commands:         incoming.Commands,
+		DisconnectPolicy: incoming.DisconnectPolicy,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal apply_config payload: %w", err)

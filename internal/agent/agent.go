@@ -24,9 +24,10 @@ type registerPayload struct {
 // applyConfigRequest is the JSON body of an "apply_config" message from server.
 // Config and Commands match VRouterConfigSpec format.
 type applyConfigRequest struct {
-	ID       string `json:"id"`
-	Config   string `json:"config,omitempty"`
-	Commands string `json:"commands,omitempty"`
+	ID               string `json:"id"`
+	Config           string `json:"config,omitempty"`
+	Commands         string `json:"commands,omitempty"`
+	DisconnectPolicy string `json:"disconnect_policy,omitempty"` // override agent's default: "keep" or "rollback"
 }
 
 // configAckPayload is the JSON body of a "config_ack" response.
@@ -43,6 +44,19 @@ type configAckPayload struct {
 // It should apply the config and return stdout, stderr, exit code, and error.
 type ConfigHandler func(ctx context.Context, config string) (stdout, stderr string, exitCode int, err error)
 
+// DisconnectPolicy controls what the agent does when it can't reach the server.
+type DisconnectPolicy string
+
+const (
+	// PolicyKeep keeps the current running config (default).
+	// Use when server downtime shouldn't affect the router.
+	PolicyKeep DisconnectPolicy = "keep"
+
+	// PolicyRollback applies the init config to restore a known-good baseline.
+	// Use when a bad config push might have broken connectivity.
+	PolicyRollback DisconnectPolicy = "rollback"
+)
+
 // Agent represents a gRPC agent client.
 type Agent struct {
 	serverAddr    string
@@ -55,8 +69,9 @@ type Agent struct {
 
 	// Init config failover
 	initConfig       *InitConfig
-	initMaxRetries   int  // consecutive failures before applying init config
-	initApplied      bool // true if init config was already applied this disconnect cycle
+	initMaxRetries   int              // consecutive failures before policy kicks in
+	disconnectPolicy DisconnectPolicy // what to do on prolonged disconnect
+	initApplied      bool             // true if init config was already applied this disconnect cycle
 }
 
 // Option configures an Agent.
@@ -80,26 +95,28 @@ func WithReconnect(min, max time.Duration) Option {
 	}
 }
 
-// WithInitConfig sets the init config for failover.
+// WithInitConfig sets the init config and disconnect policy.
 // maxRetries is the number of consecutive connection failures before
-// the init config is applied (0 = apply on first failure).
-func WithInitConfig(ic *InitConfig, maxRetries int) Option {
+// the policy kicks in.
+func WithInitConfig(ic *InitConfig, maxRetries int, policy DisconnectPolicy) Option {
 	return func(a *Agent) {
 		a.initConfig = ic
 		a.initMaxRetries = maxRetries
+		a.disconnectPolicy = policy
 	}
 }
 
 // New creates a new Agent.
 func New(serverAddr, agentID string, opts ...Option) *Agent {
 	a := &Agent{
-		serverAddr:     serverAddr,
-		agentID:        agentID,
-		version:        "dev",
-		configHandler:  defaultConfigHandler,
-		reconnectMin:   1 * time.Second,
-		reconnectMax:   30 * time.Second,
-		initMaxRetries: 3,
+		serverAddr:       serverAddr,
+		agentID:          agentID,
+		version:          "dev",
+		configHandler:    defaultConfigHandler,
+		reconnectMin:     1 * time.Second,
+		reconnectMax:     30 * time.Second,
+		initMaxRetries:   3,
+		disconnectPolicy: PolicyKeep,
 	}
 	for _, o := range opts {
 		o(a)
@@ -143,6 +160,9 @@ func (a *Agent) Run(ctx context.Context) error {
 
 // shouldApplyInitConfig returns true if init config should be applied now.
 func (a *Agent) shouldApplyInitConfig(failures int) bool {
+	if a.disconnectPolicy != PolicyRollback {
+		return false
+	}
 	if a.initConfig == nil || a.initConfig.IsEmpty() {
 		return false
 	}
@@ -227,6 +247,12 @@ func (a *Agent) handleApplyConfig(ctx context.Context, stream agentpb.AgentServi
 	if err := json.Unmarshal(payload, &req); err != nil {
 		log.Printf("bad apply_config payload: %v", err)
 		return
+	}
+
+	// Override disconnect policy if the server specifies one
+	if req.DisconnectPolicy != "" {
+		a.disconnectPolicy = DisconnectPolicy(req.DisconnectPolicy)
+		log.Printf("disconnect policy overridden to %q by server", a.disconnectPolicy)
 	}
 
 	// Render the vbash script, merging with init config if present

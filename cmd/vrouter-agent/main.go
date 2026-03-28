@@ -38,9 +38,10 @@ func main() {
 			log.Fatalf("failed to load init config from %s: %v", cfg.InitConfigPath, err)
 		}
 		if !ic.IsEmpty() {
-			log.Printf("loaded init config from %s (config=%d bytes, commands=%d bytes)",
-				cfg.InitConfigPath, len(ic.Config), len(ic.Commands))
-			opts = append(opts, agent.WithInitConfig(ic, cfg.InitMaxRetries))
+			policy := agent.DisconnectPolicy(cfg.DisconnectPolicy)
+			log.Printf("loaded init config from %s (config=%d bytes, commands=%d bytes, disconnect-policy=%s)",
+				cfg.InitConfigPath, len(ic.Config), len(ic.Commands), policy)
+			opts = append(opts, agent.WithInitConfig(ic, cfg.InitMaxRetries, policy))
 		}
 	}
 
