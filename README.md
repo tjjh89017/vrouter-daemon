@@ -183,9 +183,8 @@ make build
 # Tests (E2E tests require Redis on localhost:6379)
 go test ./...
 
-# Lint
-make lint       # runs golangci-lint
-go fmt ./...    # format only
+# Lint (fmt + vet + golangci-lint)
+make lint
 ```
 
 ## License

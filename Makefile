@@ -16,6 +16,8 @@ build: proto
 	go build -o bin/vrouter-agent ./cmd/vrouter-agent/
 
 lint:
+	go fmt ./...
+	go vet ./...
 	golangci-lint run
 
 clean:
