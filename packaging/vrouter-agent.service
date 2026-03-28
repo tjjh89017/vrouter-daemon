@@ -1,6 +1,7 @@
 [Unit]
 Description=VRouter Agent
-After=network.target
+After=vyos-router.service
+Requires=vyos-router.service
 
 [Service]
 EnvironmentFile=/etc/default/vrouter-agent

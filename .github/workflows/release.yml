@@ -31,13 +31,19 @@ jobs:
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o dist/vrouter-agent-linux-arm64 ./cmd/vrouter-agent/
 
       - name: Build deb (amd64)
-        run: nfpm package --packager deb --target dist/
+        run: |
+          cp dist/vrouter-agent-linux-amd64 dist/vrouter-agent
+          nfpm package --packager deb --target dist/
+          rm dist/vrouter-agent
         env:
           VERSION: ${{ github.ref_name }}
           ARCH: amd64
 
       - name: Build deb (arm64)
-        run: nfpm package --packager deb --target dist/
+        run: |
+          cp dist/vrouter-agent-linux-arm64 dist/vrouter-agent
+          nfpm package --packager deb --target dist/
+          rm dist/vrouter-agent
         env:
           VERSION: ${{ github.ref_name }}
           ARCH: arm64

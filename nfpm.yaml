@@ -9,7 +9,7 @@ vendor: tjjh89017
 license: Apache-2.0
 
 contents:
-  - src: dist/vrouter-agent-linux-${ARCH}
+  - src: dist/vrouter-agent
     dst: /usr/local/bin/vrouter-agent
     file_info:
       mode: 0755
