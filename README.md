@@ -21,10 +21,10 @@ vrouter-operator               vrouter-server (k8s)
 
 **Two services on separate ports:**
 - **ControlService** (`:50052`, ClusterIP) — operator-facing unary RPCs: `IsConnected`, `GetStatus`, `ApplyConfig`
-- **AgentService** (`:50051`, LoadBalancer) — agent-facing bidirectional streaming
+- **AgentService** (`:50051`, NodePort 30051) — agent-facing bidirectional streaming
 
 **Scale-out via Redis Sentinel:**
-- Agent registry (agentID → metadata) stored in Redis hashes with TTL
+- Agent registry (agentID → metadata) stored in Redis hashes with TTL refresh every 20s
 - ApplyConfig routed via Redis lists (RPUSH/BLPOP) — no pod-to-pod gRPC forwarding
 - Redis HA via Sentinel (3 Redis + 3 Sentinel, automatic failover)
 
@@ -58,11 +58,41 @@ vrouter-server \
 
 # Run agent
 vrouter-agent \
-  --server grpc.example.com:50051 \
+  --server 172.30.0.40:30051 \
   --agent-id vyos-tokyo-1 \
   --init-config /config/vrouter-agent/init.yaml \
   --disconnect-policy keep
 ```
+
+`--agent-id` is optional — falls back to `/etc/machine-id` automatically.
+
+## Agent Installation (VyOS)
+
+Download the `.deb` from the [latest release](https://github.com/tjjh89017/vrouter-daemon/releases/latest) and install:
+
+```bash
+dpkg -i vrouter-agent_<version>_amd64.deb
+```
+
+Edit `/etc/default/vrouter-agent`:
+
+```bash
+# AgentService address
+AGENT_ARGS="--server 172.30.0.40:30051"
+
+# VRF name (leave empty to disable)
+VRF_NAME=mgmt
+```
+
+Then start the service:
+
+```bash
+systemctl start vrouter-agent
+systemctl status vrouter-agent
+journalctl -u vrouter-agent -f
+```
+
+The agent starts after `vyos-router.service` and automatically uses `ip vrf exec $VRF_NAME` if `VRF_NAME` is set.
 
 ## Agent Init Config
 
@@ -89,8 +119,6 @@ after_config: |
 after_commands: |
   set protocols static route 0.0.0.0/0 next-hop 192.168.1.1
   set firewall name MGMT rule 10 action accept
-  set firewall name MGMT rule 10 destination port 50051
-  set firewall name MGMT rule 10 protocol tcp
 ```
 
 All four fields are optional. Any combination works.
@@ -110,16 +138,12 @@ commit                             ← second commit (only if after fields set)
 save
 ```
 
-The after-phase ensures init config's protected settings are always the final authority, regardless of what the operator pushes. Both commits run in the same local vbash process — no network dependency between them.
-
 ### Disconnect policy
 
 | Policy | Behavior | Use case |
 |--------|----------|----------|
 | `keep` (default) | Maintain current config when server unreachable | Server is down, router config is fine |
 | `rollback` | Apply init config after `--init-max-retries` failures | Bad config push may have broken connectivity |
-
-The server can override the agent's policy per-push via `disconnect_policy` field in `apply_config`.
 
 ### Reconnect backoff
 
@@ -153,23 +177,42 @@ All flags have corresponding environment variables.
 ## Kubernetes Deployment
 
 ```bash
-kubectl apply -f deploy/kubernetes/
+kubectl apply -f deploy/kubernetes/namespace.yaml
+kubectl apply -f deploy/kubernetes/redis-ha.yaml
+kubectl apply -f deploy/kubernetes/vrouter-daemon.yaml
 ```
 
 Creates in `vrouter-system` namespace:
 - **Redis StatefulSet** (3 replicas) + headless service — master-replica replication
 - **Redis Sentinel** (3 replicas) — automatic failover, quorum=2
-- **vrouter-daemon** deployment (2 replicas, scalable) with Sentinel connection
+- **vrouter-daemon** deployment (2 replicas) with Sentinel connection
 - **vrouter-daemon** service (ClusterIP `:50052`) — for operator
-- **vrouter-daemon-agents** service (LoadBalancer `:50051`) — for external agents
+- **vrouter-daemon-agents** service (NodePort `30051`) — for external agents
+
+### VRouterTarget configuration (vrouter-operator)
+
+```yaml
+apiVersion: vrouter.kojuro.date/v1
+kind: VRouterTarget
+metadata:
+  name: vyos-router-01
+  namespace: default
+spec:
+  provider:
+    type: vrouter-daemon
+    daemon:
+      address: "vrouter-daemon.vrouter-system.svc:50052"
+      agentID: "<contents of /etc/machine-id on the VyOS host>"
+      timeoutSeconds: 60
+```
 
 ## CI/CD
 
-GitHub Actions pipeline (`.github/workflows/ci.yaml`):
-- **lint**: `golangci-lint` (errcheck + default linters)
-- **test**: `go test -race` with Redis service container, uploads coverage artifact
-- **build**: cross-compile `linux/amd64` + `linux/arm64`, upload artifacts
-- **push-image**: multi-arch container to `ghcr.io/tjjh89017/vrouter-server` (on main/tags)
+| Workflow | Trigger | Action |
+|----------|---------|--------|
+| `lint.yaml` | all pushes + PRs | `golangci-lint` |
+| `docker.yaml` | push to `main` | build + push `vrouter-server` image as `:main` |
+| `release.yaml` | push `v*` tag | build + push `:vX.Y.Z` image, build agent binaries + `.deb`, create GitHub Release |
 
 ## Development
 
