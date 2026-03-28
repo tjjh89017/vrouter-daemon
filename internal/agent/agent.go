@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"time"
 
@@ -176,6 +177,14 @@ func (a *Agent) shouldApplyInitConfig(failures int) bool {
 func (a *Agent) applyInitConfig(ctx context.Context) {
 	log.Printf("applying init config after connection failures")
 
+	// Write after_config to temp file if merge will be needed
+	if a.initConfig.AfterConfig != "" {
+		if err := os.WriteFile(AfterConfigFile, []byte(a.initConfig.AfterConfig), 0644); err != nil {
+			log.Printf("failed to write after config: %v", err)
+			return
+		}
+	}
+
 	script, err := a.initConfig.RenderScript()
 	if err != nil {
 		log.Printf("failed to render init config script: %v", err)
@@ -272,6 +281,12 @@ func (a *Agent) handleApplyConfig(ctx context.Context, stream agentpb.AgentServi
 // merged with init config if present.
 func (a *Agent) renderApplyScript(pushedConfig, pushedCommands string) ([]byte, error) {
 	if a.initConfig != nil && !a.initConfig.IsEmpty() {
+		// Write after_config to temp file if merge will be needed
+		if a.initConfig.AfterConfig != "" {
+			if err := os.WriteFile(AfterConfigFile, []byte(a.initConfig.AfterConfig), 0644); err != nil {
+				return nil, fmt.Errorf("write after config to %s: %w", AfterConfigFile, err)
+			}
+		}
 		return a.initConfig.RenderMergedScript(pushedConfig, pushedCommands)
 	}
 	return RenderSimpleScript(pushedConfig, pushedCommands)

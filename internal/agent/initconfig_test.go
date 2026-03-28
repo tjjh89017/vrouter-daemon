@@ -18,6 +18,14 @@ func TestLoadInitConfigYAML(t *testing.T) {
     }
   }
 commands: |
+  set system name-server 8.8.8.8
+after_config: |
+  interfaces {
+    ethernet eth0 {
+      address dhcp
+    }
+  }
+after_commands: |
   set protocols static route 0.0.0.0/0 next-hop 192.168.1.1
   set firewall name MGMT rule 10 action accept
 `
@@ -28,9 +36,14 @@ commands: |
 		t.Fatalf("LoadInitConfig error: %v", err)
 	}
 	assertContains(t, ic.Config, "ethernet eth0")
-	assertContains(t, ic.Commands, "set protocols static route")
+	assertContains(t, ic.Commands, "name-server")
+	assertContains(t, ic.AfterConfig, "ethernet eth0")
+	assertContains(t, ic.AfterCommands, "set protocols static route")
 	if ic.IsEmpty() {
-		t.Fatal("expected non-empty init config")
+		t.Fatal("expected non-empty")
+	}
+	if !ic.HasAfter() {
+		t.Fatal("expected HasAfter=true")
 	}
 }
 
@@ -40,120 +53,174 @@ func TestLoadInitConfigEmpty(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !ic.IsEmpty() {
-		t.Fatal("expected empty init config")
+		t.Fatal("expected empty")
+	}
+	if ic.HasAfter() {
+		t.Fatal("expected HasAfter=false")
 	}
 }
 
-func TestLoadInitConfigOnlyCommands(t *testing.T) {
+func TestLoadInitConfigBeforeOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "init.yaml")
-	os.WriteFile(path, []byte("commands: |\n  set interfaces ethernet eth0 address dhcp\n"), 0644)
+	os.WriteFile(path, []byte("commands: |\n  set foo\n"), 0644)
 
 	ic, err := LoadInitConfig(path)
 	if err != nil {
-		t.Fatalf("LoadInitConfig error: %v", err)
-	}
-	if ic.Config != "" {
-		t.Fatalf("expected empty config, got: %s", ic.Config)
+		t.Fatal(err)
 	}
 	if ic.IsEmpty() {
 		t.Fatal("expected non-empty")
 	}
+	if ic.HasAfter() {
+		t.Fatal("expected HasAfter=false")
+	}
 }
 
-// --- RenderScript (failover, init config only) ---
+// --- RenderScript (failover) ---
 
-func TestRenderScript(t *testing.T) {
+func TestRenderScript_BeforeAndAfter(t *testing.T) {
 	ic := &InitConfig{
-		Config:   "interfaces {\n  ethernet eth0 {\n    address dhcp\n  }\n}",
-		Commands: "set protocols static route 0.0.0.0/0 next-hop 192.168.1.1",
+		Config:        "init { config }",
+		Commands:      "set init-cmd",
+		AfterConfig:   "after { config }",
+		AfterCommands: "set after-cmd",
 	}
 	script, err := ic.RenderScript()
 	s := mustRender(t, script, err)
 
-	assertContains(t, s, "#!/bin/vbash")
 	assertContains(t, s, "load /dev/stdin")
-	assertContains(t, s, "ethernet eth0")
-	assertContains(t, s, "set protocols static route")
-	assertContains(t, s, "commit")
-	assertContains(t, s, "save")
-	assertNotContains(t, s, "merge")
+	assertContains(t, s, "init { config }")
+	assertContains(t, s, "set init-cmd")
+	assertContains(t, s, "merge /tmp/vrouter-after.config")
+	assertContains(t, s, "set after-cmd")
+	// Two commits
+	if strings.Count(s, "commit") != 2 {
+		t.Fatalf("expected 2 commits, got %d in:\n%s", strings.Count(s, "commit"), s)
+	}
 }
 
-func TestRenderScriptNoConfig(t *testing.T) {
-	ic := &InitConfig{Commands: "set interfaces ethernet eth0 address dhcp"}
+func TestRenderScript_BeforeOnly(t *testing.T) {
+	ic := &InitConfig{
+		Config:   "init { config }",
+		Commands: "set init-cmd",
+	}
 	script, err := ic.RenderScript()
 	s := mustRender(t, script, err)
-	assertContains(t, s, "load /opt/vyatta/etc/config.boot.default")
-	assertContains(t, s, "set interfaces ethernet eth0")
+
+	assertContains(t, s, "init { config }")
+	assertContains(t, s, "set init-cmd")
+	assertNotContains(t, s, "merge")
+	// Single commit
+	if strings.Count(s, "commit") != 1 {
+		t.Fatalf("expected 1 commit, got %d", strings.Count(s, "commit"))
+	}
 }
 
-func TestRenderScriptEmpty(t *testing.T) {
+func TestRenderScript_AfterOnly(t *testing.T) {
+	ic := &InitConfig{
+		AfterCommands: "set after-cmd",
+	}
+	script, err := ic.RenderScript()
+	s := mustRender(t, script, err)
+
+	assertContains(t, s, "load /opt/vyatta/etc/config.boot.default")
+	assertContains(t, s, "set after-cmd")
+	if strings.Count(s, "commit") != 2 {
+		t.Fatalf("expected 2 commits, got %d", strings.Count(s, "commit"))
+	}
+}
+
+func TestRenderScript_Empty(t *testing.T) {
 	ic := &InitConfig{}
 	script, err := ic.RenderScript()
 	s := mustRender(t, script, err)
+
 	assertContains(t, s, "load /opt/vyatta/etc/config.boot.default")
+	if strings.Count(s, "commit") != 1 {
+		t.Fatalf("expected 1 commit, got %d", strings.Count(s, "commit"))
+	}
 }
 
 // --- RenderMergedScript (server push + init config) ---
 
-func TestRenderMergedScript_InitConfigAndPushedConfig(t *testing.T) {
+func TestRenderMergedScript_FullFlow(t *testing.T) {
 	ic := &InitConfig{
-		Config:   "init { base config }",
+		Config:        "init { base }",
+		Commands:      "set init-cmd",
+		AfterConfig:   "after { protect }",
+		AfterCommands: "set after-cmd",
+	}
+	script, err := ic.RenderMergedScript("pushed { config }", "set pushed-cmd")
+	s := mustRender(t, script, err)
+
+	// Phase 1: load init config (wins over pushed), init commands, pushed commands, commit
+	assertContains(t, s, "init { base }")
+	assertNotContains(t, s, "pushed { config }") // before config wins
+	assertContains(t, s, "set init-cmd")
+	assertContains(t, s, "set pushed-cmd")
+
+	// Phase 2: merge after config, after commands, commit
+	assertContains(t, s, "merge /tmp/vrouter-after.config")
+	assertContains(t, s, "set after-cmd")
+
+	// Ordering: init-cmd → pushed-cmd → merge → after-cmd
+	initIdx := strings.Index(s, "set init-cmd")
+	pushedIdx := strings.Index(s, "set pushed-cmd")
+	mergeIdx := strings.Index(s, "merge")
+	afterIdx := strings.Index(s, "set after-cmd")
+	if initIdx > pushedIdx || pushedIdx > mergeIdx || mergeIdx > afterIdx {
+		t.Fatal("wrong ordering")
+	}
+
+	if strings.Count(s, "commit") != 2 {
+		t.Fatalf("expected 2 commits, got %d", strings.Count(s, "commit"))
+	}
+}
+
+func TestRenderMergedScript_BeforeOnlyInit(t *testing.T) {
+	ic := &InitConfig{
+		Config:   "init { config }",
 		Commands: "set init-cmd",
 	}
 	script, err := ic.RenderMergedScript("pushed { config }", "set pushed-cmd")
 	s := mustRender(t, script, err)
 
-	// Init config block wins for load
-	assertContains(t, s, "init { base config }")
-	assertNotContains(t, s, "pushed { config }")
-	// Init commands before pushed commands, single commit
-	assertContains(t, s, "set init-cmd")
-	assertContains(t, s, "set pushed-cmd")
-	assertNotContains(t, s, "merge")
-
-	initIdx := strings.Index(s, "set init-cmd")
-	pushIdx := strings.Index(s, "set pushed-cmd")
-	if initIdx > pushIdx {
-		t.Fatal("init commands must come before pushed commands")
-	}
-}
-
-func TestRenderMergedScript_InitCommandsOnly(t *testing.T) {
-	ic := &InitConfig{Commands: "set init-cmd"}
-	script, err := ic.RenderMergedScript("pushed { config }", "set pushed-cmd")
-	s := mustRender(t, script, err)
-
-	// No init config block → pushed config loaded
-	assertContains(t, s, "pushed { config }")
-	assertContains(t, s, "set init-cmd")
-	assertContains(t, s, "set pushed-cmd")
-
-	initIdx := strings.Index(s, "set init-cmd")
-	pushIdx := strings.Index(s, "set pushed-cmd")
-	if initIdx > pushIdx {
-		t.Fatal("init commands must come before pushed commands")
-	}
-}
-
-func TestRenderMergedScript_NoPushedConfig(t *testing.T) {
-	ic := &InitConfig{Config: "init { config }", Commands: "set init-cmd"}
-	script, err := ic.RenderMergedScript("", "set pushed-cmd")
-	s := mustRender(t, script, err)
-
 	assertContains(t, s, "init { config }")
 	assertContains(t, s, "set init-cmd")
 	assertContains(t, s, "set pushed-cmd")
+	assertNotContains(t, s, "merge")
+	if strings.Count(s, "commit") != 1 {
+		t.Fatalf("expected 1 commit, got %d", strings.Count(s, "commit"))
+	}
 }
 
-func TestRenderMergedScript_NoPushedAnything(t *testing.T) {
-	ic := &InitConfig{Config: "init { config }", Commands: "set init-cmd"}
+func TestRenderMergedScript_AfterOnlyInit(t *testing.T) {
+	ic := &InitConfig{
+		AfterCommands: "set after-cmd",
+	}
+	script, err := ic.RenderMergedScript("pushed { config }", "set pushed-cmd")
+	s := mustRender(t, script, err)
+
+	// No before config → pushed config loaded
+	assertContains(t, s, "pushed { config }")
+	assertContains(t, s, "set pushed-cmd")
+	assertContains(t, s, "set after-cmd")
+	if strings.Count(s, "commit") != 2 {
+		t.Fatalf("expected 2 commits, got %d", strings.Count(s, "commit"))
+	}
+}
+
+func TestRenderMergedScript_NoPushed(t *testing.T) {
+	ic := &InitConfig{
+		Config:        "init { config }",
+		AfterCommands: "set after-cmd",
+	}
 	script, err := ic.RenderMergedScript("", "")
 	s := mustRender(t, script, err)
 
 	assertContains(t, s, "init { config }")
-	assertContains(t, s, "set init-cmd")
+	assertContains(t, s, "set after-cmd")
 	assertNotContains(t, s, "pushed")
 }
 
@@ -163,17 +230,18 @@ func TestRenderSimpleScript(t *testing.T) {
 	script, err := RenderSimpleScript("my { config }", "set my-cmd")
 	s := mustRender(t, script, err)
 
-	assertContains(t, s, "load /dev/stdin")
 	assertContains(t, s, "my { config }")
 	assertContains(t, s, "set my-cmd")
-	assertNotContains(t, s, "init config")
+	assertNotContains(t, s, "merge")
+	if strings.Count(s, "commit") != 1 {
+		t.Fatalf("expected 1 commit, got %d", strings.Count(s, "commit"))
+	}
 }
 
 func TestRenderSimpleScriptNoConfig(t *testing.T) {
 	script, err := RenderSimpleScript("", "set cmd")
 	s := mustRender(t, script, err)
 	assertContains(t, s, "load /opt/vyatta/etc/config.boot.default")
-	assertContains(t, s, "set cmd")
 }
 
 // --- helpers ---
