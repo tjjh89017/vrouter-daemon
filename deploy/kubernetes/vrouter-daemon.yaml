@@ -15,6 +15,15 @@ spec:
       labels:
         app: vrouter-daemon
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: vrouter-daemon
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: vrouter-server
           image: ghcr.io/tjjh89017/vrouter-server:latest
