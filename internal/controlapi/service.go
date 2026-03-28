@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"context"
+	"log"
 	"time"
 
 	controlpb "github.com/tjjh89017/vrouter-daemon/gen/go/controlpb"
@@ -88,13 +89,20 @@ func (s *Service) ApplyConfig(ctx context.Context, req *controlpb.ApplyConfigReq
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	log.Printf("apply_config agent=%s payload=%d bytes timeout=%v", req.AgentId, len(req.ConfigPayload), timeout)
+
 	result, err := s.broker.Submit(ctx, req.AgentId, req.ConfigPayload, timeout)
 	if err != nil {
 		if ctx.Err() != nil {
+			log.Printf("apply_config agent=%s timed out", req.AgentId)
 			return nil, status.Errorf(codes.DeadlineExceeded, "apply_config timed out for agent %q", req.AgentId)
 		}
+		log.Printf("apply_config agent=%s error: %v", req.AgentId, err)
 		return nil, status.Errorf(codes.Internal, "apply_config failed: %v", err)
 	}
+
+	log.Printf("apply_config agent=%s success=%v exitCode=%d stdout=%q stderr=%q",
+		req.AgentId, result.Success, result.ExitCode, result.Stdout, result.Stderr)
 
 	return &controlpb.ApplyConfigResponse{
 		Success:      result.Success,

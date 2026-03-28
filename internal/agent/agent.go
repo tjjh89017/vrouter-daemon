@@ -274,15 +274,22 @@ func (a *Agent) handleApplyConfig(ctx context.Context, stream agentpb.AgentServi
 		log.Printf("disconnect policy overridden to %q by server", a.disconnectPolicy)
 	}
 
+	log.Printf("apply_config id=%s config=%d bytes commands=%d bytes", req.ID, len(req.Config), len(req.Commands))
+
 	// Render the vbash script, merging with init config if present
 	script, err := a.renderApplyScript(req.Config, req.Commands)
 	if err != nil {
-		log.Printf("failed to render apply script: %v", err)
+		log.Printf("apply_config id=%s render error: %v", req.ID, err)
 		a.sendConfigAck(stream, req.ID, "", "", -1, err)
 		return
 	}
 
 	stdout, stderr, exitCode, err := a.configHandler(ctx, string(script))
+	if err != nil {
+		log.Printf("apply_config id=%s exec error: %v", req.ID, err)
+	} else {
+		log.Printf("apply_config id=%s exitCode=%d stdout=%q stderr=%q", req.ID, exitCode, stdout, stderr)
+	}
 
 	a.sendConfigAck(stream, req.ID, stdout, stderr, exitCode, err)
 }
