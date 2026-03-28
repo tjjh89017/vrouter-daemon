@@ -145,7 +145,7 @@ All flags have corresponding environment variables.
 | Flag | Env | Default | Description |
 |------|-----|---------|-------------|
 | `--server` | `SERVER_ADDR` | `localhost:50051` | Server address |
-| `--agent-id` | `AGENT_ID` | | Agent ID (required) |
+| `--agent-id` | `AGENT_ID` | `/etc/machine-id` | Agent ID (falls back to `/etc/machine-id`) |
 | `--init-config` | `INIT_CONFIG` | | Path to init config YAML |
 | `--init-max-retries` | | `3` | Failures before disconnect policy kicks in |
 | `--disconnect-policy` | `DISCONNECT_POLICY` | `keep` | `keep` or `rollback` |
