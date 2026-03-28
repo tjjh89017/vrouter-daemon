@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -21,6 +22,8 @@ import (
 	"github.com/tjjh89017/vrouter-daemon/internal/registry"
 )
 
+const shutdownTimeout = 10 * time.Second
+
 func main() {
 	cfg := config.ParseDaemon()
 
@@ -30,6 +33,9 @@ func main() {
 	if cfg.Server.PodIP == "" {
 		log.Fatal("--pod-ip is required (set via POD_IP env from Downward API)")
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Cluster registry + broker (Redis)
 	clusterReg, redisClient, err := cluster.NewRegistry(cfg.Server.RedisAddr, cfg.Server.PodIP)
@@ -79,11 +85,7 @@ func main() {
 	}()
 
 	// Start the embedded agent
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	a := agent.New(cfg.Agent.ServerAddr, cfg.Agent.AgentID)
-
 	go func() {
 		log.Printf("embedded agent connecting to %s as %q", cfg.Agent.ServerAddr, cfg.Agent.AgentID)
 		if err := a.Run(ctx); err != nil && err != context.Canceled {
@@ -95,10 +97,31 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
-	log.Printf("received signal %v, shutting down", sig)
+	log.Printf("received signal %v, shutting down (timeout %v)", sig, shutdownTimeout)
 
+	// 1. Cancel context — stops embedded agent + broker watchers
 	cancel()
-	agentServer.GracefulStop()
-	controlServer.GracefulStop()
+
+	// 2. Graceful stop gRPC servers (with timeout fallback)
+	gracefulStop(agentServer, controlServer)
 	log.Println("daemon stopped")
+}
+
+func gracefulStop(servers ...*grpc.Server) {
+	done := make(chan struct{})
+	go func() {
+		for _, s := range servers {
+			s.GracefulStop()
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(shutdownTimeout):
+		log.Println("graceful shutdown timed out, forcing stop")
+		for _, s := range servers {
+			s.Stop()
+		}
+	}
 }

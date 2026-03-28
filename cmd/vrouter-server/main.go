@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/tjjh89017/vrouter-daemon/internal/dispatch"
 	"github.com/tjjh89017/vrouter-daemon/internal/registry"
 )
+
+const shutdownTimeout = 10 * time.Second
 
 func main() {
 	cfg := config.ParseServer()
@@ -77,9 +80,28 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
-	log.Printf("received signal %v, shutting down", sig)
+	log.Printf("received signal %v, shutting down (timeout %v)", sig, shutdownTimeout)
 
-	agentServer.GracefulStop()
-	controlServer.GracefulStop()
+	gracefulStop(agentServer, controlServer)
 	log.Println("server stopped")
+}
+
+// gracefulStop attempts GracefulStop with a timeout, falls back to Stop.
+func gracefulStop(servers ...*grpc.Server) {
+	done := make(chan struct{})
+	go func() {
+		for _, s := range servers {
+			s.GracefulStop()
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(shutdownTimeout):
+		log.Println("graceful shutdown timed out, forcing stop")
+		for _, s := range servers {
+			s.Stop()
+		}
+	}
 }
